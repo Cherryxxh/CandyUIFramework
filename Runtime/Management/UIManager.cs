@@ -168,7 +168,8 @@ namespace CandyUI
         #region 关闭
 
         /// <summary>
-        /// 关闭一个面板实例。门面按它的身份路由：
+        /// 发起关闭一个面板实例（后台播退场动画，播完再销毁或入缓存）；想等真正关完请用 CloseAsync。
+        /// 门面按它的身份路由：
         /// - 弹窗：关闭后自动显示队列里的下一个；
         /// - 窗口：关闭后恢复上一个窗口；
         /// - 普通面板：直接销毁。
@@ -195,6 +196,32 @@ namespace CandyUI
             }
 
             s_panels.ClosePanel(panel, reason);
+        }
+
+        /// <summary>
+        /// 关闭一个面板并等待关闭完成（退场动画播完、实例已销毁或已入缓存），返回是否关成功。
+        /// 路由规则与 Close 相同；被 CanClose 拦截或不在打开状态时返回 false。
+        /// </summary>
+        public static async Task<bool> CloseAsync(UIPanel panel, PanelCloseReason reason = PanelCloseReason.UserClose)
+        {
+            if (panel == null)
+                return false;
+
+            if (s_popups.IsActive(panel))
+                return await s_popups.ClosePopupAsync(panel, reason);
+
+            if (s_windows.Contains(panel))
+                return await s_windows.CloseWindowAsync(panel, reason);
+
+            return await s_panels.ClosePanelAsync(panel, reason);
+        }
+
+        /// <summary>
+        /// 等待面板本次关闭流程结束（退场动画播完、已销毁或已入缓存）；未在关闭中时立即完成。
+        /// </summary>
+        public static Task WaitForCloseAsync(UIPanel panel)
+        {
+            return s_panels.WaitCloseAsync(panel);
         }
 
         /// <summary>关闭指定类型的面板（没打开时什么都不做）。</summary>
@@ -251,7 +278,7 @@ namespace CandyUI
             s_windows.CloseCurrentWindow();
         }
 
-        /// <summary>关闭所有面板（切场景、退出战斗时常用）。</summary>
+        /// <summary>关闭所有面板（切场景、退出战斗时常用）；立即关闭，不等退场动画。</summary>
         public static void CloseAll()
         {
             // ForceClose 不会被界面拦截，所以先关弹窗和面板、最后清窗口栈，

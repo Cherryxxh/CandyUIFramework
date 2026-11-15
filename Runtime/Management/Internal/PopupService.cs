@@ -81,7 +81,9 @@ namespace CandyUI
 
             // 同类型弹窗已经在显示：默认刷新数据即可，不重复弹。
             // allowDuplicatePopup: true 的弹窗跳过这里，继续排队，从而可以连弹多次。
-            if (_active != null && _active.GetType() == type && !AllowsDuplicate(type))
+            // 正在播退场（Closing）的同类型弹窗不刷新：等它关完再由队列推进，避免"关闭动画中又显示"。
+            if (_active != null && _active.GetType() == type && !AllowsDuplicate(type)
+                && _active.State != UIPanelState.Closing)
             {
                 _active.InternalShow(data);
                 return (T)_active;
@@ -135,7 +137,10 @@ namespace CandyUI
             return _active != null && ClosePopup(_active);
         }
 
-        /// <summary>关闭指定弹窗（"确定/取消"按钮里调 CloseSelf 也会走到这里）。</summary>
+        /// <summary>
+        /// 发起关闭：返回 false 表示弹窗拒绝了关闭（CanClose），遮罩与队列都不变；
+        /// 受理后保持 _active 跟踪，等关闭动画播完再清跟踪并推进队列（想等完成用 ClosePopupAsync）。
+        /// </summary>
         internal bool ClosePopup(UIPanel popup, PanelCloseReason reason = PanelCloseReason.UserClose)
         {
             if (popup == null)
@@ -150,22 +155,30 @@ namespace CandyUI
             if (!_panels.ClosePanel(popup, reason))
                 return false;
 
-            _active = null;
-            CandyUILog.Info($"弹窗关闭：{popup.GetType().Name}（队列剩余 {_queue.Count}）");
-
-            if (_queue.Count > 0)
-            {
-                ShowNext();
-            }
-            else
-            {
-                HideMask();
-            }
-
+            // 注意：这里不能立刻 _active = null / ShowNext：两个弹窗的动画会叠在一起。
+            _ = FinishActiveCloseAsync(popup);
             return true;
         }
 
-        /// <summary>关闭所有弹窗并清空队列（例如切场景时）。强制关闭，不询问拦截钩子。</summary>
+        /// <summary>
+        /// 关闭指定弹窗并等待"关闭动画播完 + 队列推进/遮罩收起"完成，返回是否关成功。
+        /// </summary>
+        internal async Task<bool> ClosePopupAsync(UIPanel popup, PanelCloseReason reason = PanelCloseReason.UserClose)
+        {
+            if (popup == null)
+                return false;
+
+            if (popup != _active)
+                return await _panels.ClosePanelAsync(popup, reason);
+
+            if (!_panels.ClosePanel(popup, reason))
+                return false;
+
+            await FinishActiveCloseAsync(popup);
+            return true;
+        }
+
+        /// <summary>关闭所有弹窗并清空队列（例如切场景时）。强制关闭，不询问拦截钩子、不等动画。</summary>
         internal void CloseAllPopups()
         {
             // 让在途加载的弹窗失效，防止 CloseAllPopups 之后它又显示出来。
@@ -176,10 +189,11 @@ namespace CandyUI
             if (_active != null)
             {
                 UIPanel popup = _active;
-                bool closed = _panels.ClosePanel(popup, PanelCloseReason.ForceClose);
+                bool closed = _panels.ClosePanelImmediate(popup, PanelCloseReason.ForceClose);
 
                 // 只有确认关闭成功才清跟踪，避免"还在屏幕上但没人认识"的孤儿弹窗。
-                if (closed || popup == null)
+                // 已经在播退场的弹窗（Closing）也没法再加速，等它自己关完即可，这里同样放弃跟踪。
+                if (closed || popup == null || popup.State == UIPanelState.Closing)
                 {
                     _active = null;
                 }
@@ -190,7 +204,7 @@ namespace CandyUI
             }
 
             if (_active == null)
-                HideMask();
+                HideMask(immediate: true);
         }
 
         #endregion
@@ -273,7 +287,10 @@ namespace CandyUI
                 PopupMask mask = EnsureMask();
                 mask.SetClickHandler(OnMaskClicked);
                 float alpha = attribute == null ? 0.6f : attribute.MaskAlpha;
-                mask.Show(alpha);
+
+                // 淡入不跟随本次打开的取消令牌：弹窗已经显示出来了，动画应完整播完，
+                // 关闭/切场景时由 HideMask 取消。
+                _ = mask.ShowAsync(alpha, CancellationToken.None);
                 CandyUILog.Info($"弹窗显示：{typeof(T).Name}（遮罩 {alpha:0.00}，队列剩余 {_queue.Count}）");
 
                 return panel;
@@ -281,6 +298,38 @@ namespace CandyUI
             finally
             {
                 _loading = false;
+            }
+        }
+
+        /// <summary>
+        /// 等当前弹窗关闭动画播完：确认它仍是跟踪对象后清 _active，再推进队列或收起遮罩。
+        /// 期间若被 CloseAllPopups/新弹窗接管，就不要再碰状态（谁接管谁负责）。
+        /// </summary>
+        private async Task FinishActiveCloseAsync(UIPanel popup)
+        {
+            try
+            {
+                await _panels.WaitCloseAsync(popup);
+            }
+            catch (Exception exception)
+            {
+                CandyUILog.Warn($"等待弹窗关闭完成时出错：{popup.GetType().Name}（{exception.Message}）");
+                Debug.LogException(exception);
+            }
+
+            if (!ReferenceEquals(_active, popup) || popup == null)
+                return;
+
+            _active = null;
+            CandyUILog.Info($"弹窗关闭：{popup.GetType().Name}（队列剩余 {_queue.Count}）");
+
+            if (_queue.Count > 0)
+            {
+                ShowNext();
+            }
+            else
+            {
+                HideMask();
             }
         }
 
@@ -376,12 +425,17 @@ namespace CandyUI
         }
 
         /// <summary>
-        /// 隐藏遮罩；遮罩尚未创建时什么都不做。
+        /// 隐藏遮罩；遮罩尚未创建时什么都不做。immediate=true 时立即隐藏（强制关闭路径不等淡出）。
         /// </summary>
-        private void HideMask()
+        private void HideMask(bool immediate = false)
         {
-            if (_mask != null)
+            if (_mask == null)
+                return;
+
+            if (immediate)
                 _mask.Hide();
+            else
+                _ = _mask.HideAsync();
         }
 
         #endregion

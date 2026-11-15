@@ -72,7 +72,11 @@ namespace CandyUI
 
                 UIPanel current = _stack.Peek();
                 if (current != null && current != already)
+                {
                     current.InternalHide();
+                    // 等旧栈顶退场播完再显示新栈顶，避免两个窗口的动画叠在一起。
+                    await current.HideAsync();
+                }
 
                 _stack.Remove(already);
                 _stack.Push(already);
@@ -85,7 +89,11 @@ namespace CandyUI
 
             UIPanel previous = _stack.Peek();
             if (previous != null && previous != panel)
+            {
                 previous.InternalHide();
+                // 窗口切换等旧窗口 Out 播完，保证视觉上是"旧窗口退场 -> 新窗口入场"。
+                await previous.HideAsync();
+            }
 
             _stack.Push(panel);
             CandyUILog.Info($"窗口入栈：{type.Name}（{DescribeStack()}），上层已隐藏");
@@ -106,22 +114,14 @@ namespace CandyUI
             return current != null && CloseWindow(current, reason);
         }
 
-        /// <summary>关闭指定窗口；只有关掉的是栈顶时，才恢复下面的窗口。</summary>
+        /// <summary>
+        /// 发起关闭：返回 false 表示窗口拒绝了关闭（CanClose），栈与显示都不变；
+        /// 受理后立即出栈，上一个窗口要等当前窗口退场播完才恢复（想等恢复完成请用 CloseWindowAsync）。
+        /// </summary>
         internal bool CloseWindow(UIPanel window, PanelCloseReason reason = PanelCloseReason.UserClose)
         {
-            if (window == null)
+            if (!TryAcceptClose(window, reason, out bool wasTop))
                 return false;
-
-            // 必须在 ClosePanel 之前判断：ClosePanel 会把窗口置 Closed 并从栈里移除，
-            // 之后再 Peek 只能看到"移除后的新栈顶"，无法还原它原来是不是栈顶。
-            bool wasTop = _stack.Peek() == window;
-
-            // 先关面板：如果被拦截，窗口仍留在栈里，不能提前 Remove。
-            if (!_panels.ClosePanel(window, reason))
-                return false;
-
-            _stack.Remove(window);
-            CandyUILog.Info($"窗口出栈：{window.GetType().Name}（{DescribeStack()}）");
 
             if (!wasTop)
             {
@@ -134,12 +134,69 @@ namespace CandyUI
 
             UIPanel previous = _stack.Peek();
             if (previous != null && previous.State != UIPanelState.Closed)
+                _ = RestorePreviousWindowAsync(window, previous);
+
+            return true;
+        }
+
+        /// <summary>
+        /// 关闭指定窗口并等待"出栈 + 上一个窗口恢复显示"全部完成，返回是否关成功。
+        /// </summary>
+        internal async Task<bool> CloseWindowAsync(UIPanel window, PanelCloseReason reason = PanelCloseReason.UserClose)
+        {
+            if (!TryAcceptClose(window, reason, out bool wasTop))
+                return false;
+
+            if (wasTop)
             {
-                previous.InternalShow(previous.Data);
-                CandyUILog.Info($"恢复上一个窗口：{previous.GetType().Name}（栈深 {_stack.Count}）");
+                UIPanel previous = _stack.Peek();
+                if (previous != null && previous.State != UIPanelState.Closed)
+                    await RestorePreviousWindowAsync(window, previous);
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// 受理关闭的公共部分：先判断是否栈顶（必须在 ClosePanel 之前），再交给面板关闭并立即出栈。
+        /// </summary>
+        private bool TryAcceptClose(UIPanel window, PanelCloseReason reason, out bool wasTop)
+        {
+            wasTop = false;
+            if (window == null)
+                return false;
+
+            // 必须在 ClosePanel 之前判断：ClosePanel 会立刻把窗口移出打开表，
+            // 之后再 Peek 只能看到"移除后的新栈顶"，无法还原它原来是不是栈顶。
+            wasTop = _stack.Peek() == window;
+
+            // 先关面板：如果被拦截，窗口仍留在栈里，不能提前 Remove。
+            if (!_panels.ClosePanel(window, reason))
+                return false;
+
+            _stack.Remove(window);
+            CandyUILog.Info($"窗口出栈：{window.GetType().Name}（{DescribeStack()}）");
+            return true;
+        }
+
+        /// <summary>等窗口关闭（退场播完/实例销毁或入缓存）后再恢复上一个窗口；异常只记录不打断关闭。</summary>
+        private async Task RestorePreviousWindowAsync(UIPanel window, UIPanel previous)
+        {
+            try
+            {
+                await _panels.WaitCloseAsync(window);
+            }
+            catch (Exception exception)
+            {
+                CandyUILog.Warn($"等待窗口关闭完成时出错：{window.GetType().Name}（{exception.Message}）");
+                UnityEngine.Debug.LogException(exception);
+            }
+
+            if (previous == null || previous.State == UIPanelState.Closed)
+                return;
+
+            previous.InternalShow(previous.Data);
+            CandyUILog.Info($"恢复上一个窗口：{previous.GetType().Name}（栈深 {_stack.Count}）");
         }
 
         /// <summary>只清空历史栈，不销毁窗口实例（CloseAll 会紧接着统一销毁）。</summary>
