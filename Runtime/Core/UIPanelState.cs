@@ -9,6 +9,7 @@ namespace CandyUI
     ///
     /// 一个面板正常的一生：
     /// None -> Loading -> Created -> Showing -> Visible -> Hiding -> Hidden -> Closed
+    /// 关闭时先进入 Closing（播退场动画），再落到 Closed（销毁）或 Hidden（KeepInstance 入缓存）。
     /// </summary>
     public enum UIPanelState
     {
@@ -35,5 +36,8 @@ namespace CandyUI
 
         /// <summary>已关闭，等待销毁或已被销毁。</summary>
         Closed,
+
+        /// <summary>正在关闭：退场动画播放中，播完后销毁或进入缓存。</summary>
+        Closing = 8,
     }
 }

@@ -168,11 +168,14 @@ namespace CandyUI
             handle.Release();
         }
 
-        /// <summary>销毁一个面板实例：OnClose -> Destroy -> 释放句柄。</summary>
+        /// <summary>
+        /// 销毁一个面板实例：OnClose -> OnClosed -> Destroy -> 释放句柄。
+        /// 这里走不播动画的强制关闭，保证缓存清理/打开失败回滚不依赖帧推进。
+        /// </summary>
         internal void Destroy(UIPanelInfo info)
         {
             if (info.Panel != null)
-                info.Panel.InternalClose();
+                _ = info.Panel.InternalCloseAsync(PanelCloseReason.ForceClose, animateOut: false, destroyInstance: true);
 
             if (info.GameObject != null)
                 Object.Destroy(info.GameObject);

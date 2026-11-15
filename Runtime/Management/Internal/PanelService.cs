@@ -9,8 +9,8 @@ namespace CandyUI
     /// <summary>
     /// 面板服务（框架内部）：已打开/缓存实例注册表、打开编排、关闭/显示隐藏/查询入口。
     /// 在途打开状态（去重、等待者、取消收尾）在 PanelOpener；"地址 -> 场景实例"的创建与销毁在 PanelFactory，
-    /// 两者都不认识注册表，只通过本类传入的委托协作。
-    /// 依赖方向：WindowService/PopupService -> PanelService -> PanelOpener / PanelFactory -> AssetCache / UIRoot。
+    /// 关闭编排（等退场动画再销毁/入缓存）在 PanelCloser，三者都不认识注册表，只通过本类传入的委托协作。
+    /// 依赖方向：WindowService/PopupService -> PanelService -> PanelOpener / PanelFactory / PanelCloser -> AssetCache / UIRoot。
     /// </summary>
     internal sealed class PanelService
     {
@@ -19,17 +19,20 @@ namespace CandyUI
         private readonly Dictionary<Type, UIPanelAttribute> _dicAttributes = new Dictionary<Type, UIPanelAttribute>();
         private readonly PanelOpener _opener;
         private readonly PanelFactory _factory;
+        private readonly PanelCloser _closer;
         private IAssetLoader _assetLoader;
         private AssetCache _cache;
         /// <summary>清理代号：CloseAll / Reset 时 +1；在途加载完成时发现代号变了就放弃创建，避免旧界面复活。</summary>
         private int _generation;
         /// <summary>
-        /// 装配两个协作者：在途打开状态交给 PanelOpener，实例创建交给 PanelFactory；本类只持有注册表与编排逻辑。
+        /// 装配三个协作者：在途打开状态交给 PanelOpener，实例创建交给 PanelFactory，
+        /// 关闭编排交给 PanelCloser；本类只持有注册表与对外入口。
         /// </summary>
         internal PanelService()
         {
             _opener = new PanelOpener(CloseAbandonedPanel);
             _factory = new PanelFactory(GetAttribute, GetCache, () => _generation, () => DefaultTransition);
+            _closer = new PanelCloser(_dicOpenedPanels, _dicPanelCache, _factory, () => _generation);
         }
         #region 初始化
         /// <summary>全局默认转场；面板重写的 CreateTransition 优先，返回 null 时用它（null = 瞬切）。</summary>
@@ -242,7 +245,8 @@ namespace CandyUI
         #endregion
         #region 关闭与显示
         /// <summary>
-        /// 关闭已打开的面板；对已关闭但还留在缓存里的实例则顺手销毁。未打开或被 CanClose 拦截返回 false。
+        /// 发起关闭：受理后立即移出打开表，退场动画播完再销毁或入缓存；被拦截/未打开返回 false。
+        /// 只是"受理"——想等真正关完请用 ClosePanelAsync 或 WaitCloseAsync。
         /// </summary>
         internal bool ClosePanel(UIPanel panel, PanelCloseReason reason = PanelCloseReason.UserClose)
         {
@@ -250,10 +254,60 @@ namespace CandyUI
                 return false;
 
             Type type = panel.GetType();
-            if (_dicOpenedPanels.TryGetValue(type, out UIPanelInfo info))
-                return info.Panel == panel && TryClosePanelInfo(info, reason);
+            if (_dicOpenedPanels.TryGetValue(type, out UIPanelInfo info) && info.Panel == panel)
+                return _closer.TryClose(info, reason);
 
             // 已经关闭、但实例还留在缓存里：用户又点了关闭，就顺手销毁缓存。
+            if (_dicPanelCache.TryGetValue(type, out UIPanelInfo cached) && cached.Panel == panel)
+            {
+                _dicPanelCache.Remove(type);
+                _factory.Destroy(cached);
+                CandyUILog.Info($"销毁缓存实例：{type.Name}");
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// 发起关闭并等待关闭完成（退场动画结束、实例已销毁或已入缓存），返回是否关成功。
+        /// </summary>
+        internal async Task<bool> ClosePanelAsync(UIPanel panel, PanelCloseReason reason = PanelCloseReason.UserClose)
+        {
+            if (panel == null)
+                return false;
+
+            Type type = panel.GetType();
+            if (_dicOpenedPanels.TryGetValue(type, out UIPanelInfo info) && info.Panel == panel)
+                return await _closer.TryCloseAsync(info, reason);
+
+            if (_dicPanelCache.TryGetValue(type, out UIPanelInfo cached) && cached.Panel == panel)
+                return ClosePanel(panel, reason);
+
+            return false;
+        }
+
+        /// <summary>等待面板本次关闭流程结束；未在关闭中时立即完成。</summary>
+        internal Task WaitCloseAsync(UIPanel panel)
+        {
+            return panel != null ? panel.WaitForCloseAsync() : Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// 强制关闭指定面板：不播退场动画，立即销毁实例并释放句柄（清空弹窗/切场景等即时路径用）。
+        /// </summary>
+        internal bool ClosePanelImmediate(UIPanel panel, PanelCloseReason reason = PanelCloseReason.ForceClose)
+        {
+            if (panel == null)
+                return false;
+
+            Type type = panel.GetType();
+            if (_dicOpenedPanels.TryGetValue(type, out UIPanelInfo info) && info.Panel == panel)
+            {
+                _closer.CloseImmediate(info, reason);
+                return true;
+            }
+
             if (_dicPanelCache.TryGetValue(type, out UIPanelInfo cached) && cached.Panel == panel)
             {
                 _dicPanelCache.Remove(type);
@@ -279,11 +333,12 @@ namespace CandyUI
         {
             _generation++; // 让在途加载在完成后放弃创建（防止切场景后旧界面复活）。
 
-            // 复制一份再遍历：TryClosePanelInfo 会修改 _dicOpenedPanels；关闭全部是强制关闭，不问拦截钩子。
+            // 复制一份再遍历：关闭会修改 _dicOpenedPanels；关闭全部是强制关闭，不问拦截钩子、也不播退场动画。
             List<UIPanelInfo> snapshot = new List<UIPanelInfo>(_dicOpenedPanels.Values);
             for (int i = 0; i < snapshot.Count; i++)
-                TryClosePanelInfo(snapshot[i], PanelCloseReason.ForceClose);
+                _closer.CloseImmediate(snapshot[i], PanelCloseReason.ForceClose);
 
+            _dicOpenedPanels.Clear();
             ClearCache(); // 别把"关闭后保留实例"的缓存留到下一个场景。
         }
 
@@ -422,41 +477,6 @@ namespace CandyUI
         /// </summary>
         internal string GetDebugSnapshot()
             => $"面板: 打开 {_dicOpenedPanels.Count} | 加载中 {_opener.LoadingCount} | 缓存实例 {_dicPanelCache.Count} | 资源缓存 {_cache?.Count ?? 0}（加载中 {_cache?.LoadingCount ?? 0}）";
-        #endregion
-        #region 内部实现
-        /// <summary>
-        /// 关闭核心：先过 CanClose，再按 CloseBehavior 决定“休眠后入缓存”还是“销毁并释放句柄”。
-        /// </summary>
-        private bool TryClosePanelInfo(UIPanelInfo info, PanelCloseReason reason)
-        {
-            if (info == null)
-                return false;
-            if (info.Panel != null && !info.Panel.InternalCanClose(reason))
-            {
-                CandyUILog.Info($"关闭被拦截：{info.PanelType.Name}（原因 {reason}，界面还没有准备好关闭）");
-                return false;
-            }
-
-            _dicOpenedPanels.Remove(info.PanelType);
-            if (info.Panel != null)
-                info.Panel.InternalHide();
-
-            // KeepInstance：只隐藏，不销毁、不释放句柄，下次打开直接复用。
-            bool keepInstance = _factory.GetCloseBehavior(info.PanelType) == PanelCloseBehavior.KeepInstance
-                                && info.Panel != null && info.GameObject != null;
-            if (keepInstance)
-            {
-                // 通知 Presenter：实例要进缓存了（OnClose 不会触发）。
-                info.Panel.InternalSleep();
-                _dicPanelCache[info.PanelType] = info;
-                CandyUILog.Info($"面板关闭并保留实例：{info.PanelType.Name}（缓存实例 {_dicPanelCache.Count}，OnClose 不触发）");
-                return true;
-            }
-
-            CandyUILog.Info($"面板关闭：{info.PanelType.Name}（从打开表移除，销毁实例并释放句柄）");
-            _factory.Destroy(info);
-            return true;
-        }
         #endregion
     }
 }

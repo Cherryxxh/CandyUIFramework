@@ -18,6 +18,7 @@ namespace CandyUI
     ///   OnShow    —— 每次显示都执行。在这里根据 data 刷新界面。
     ///   OnHide    —— 每次隐藏都执行（面板没销毁，可能再次显示）。
     ///   OnClose   —— 面板被关闭、即将销毁前执行。
+    ///   OnClosed  —— 本次关闭流程结束（含 KeepInstance 入缓存）时执行，可在这里做关闭后的收尾。
     ///   OnSleep / OnResume —— 只有 KeepInstance 面板会用到：进缓存/从缓存恢复时执行。
     ///                         这时的关闭不会触发 OnClose，所以退订全局事件要放在 OnSleep，
     ///                         重订放在 OnResume（没有 Presenter 的界面同样有用）。
@@ -56,6 +57,15 @@ namespace CandyUI
 
         private bool _isCreated;
         private CancellationTokenSource _transitionCts;
+
+        // 退场动画的 Task：隐藏流程会返回它，窗口切换等上层可以 await 到"旧窗口已经退场"。
+        private Task _hideTask;
+
+        // 关闭流程 Task：重复 Close 时复用，保证退场动画只播一次。
+        private Task _closeTask;
+
+        // 关闭退场专用 CTS：不能被"入场/隐藏"的转场取消逻辑波及。
+        private CancellationTokenSource _closeCts;
 
         #endregion
 
@@ -173,6 +183,13 @@ namespace CandyUI
             }
             catch
             {
+                // 关键约束：OnShow 里重入关闭时，InternalCloseAsync 已经把 State 置为 Closing、
+                // 接管了退场动画。这里再回滚状态或 SetActive(false) 会打断动画，
+                // 让关闭 Task 卡在等一个永远不会完成的转场上（对象被隐藏后协程会停）。
+                // 所以直接上抛，让打开方按"取消"收尾，关闭流程继续自己完成。
+                if (State == UIPanelState.Closing)
+                    throw;
+
                 // 显示失败：回到进入前的稳定状态，并取消可能已经开始播的入场动画。
                 // 关键约束：不能把 State 留在 Showing —— 调用方（PanelService / 窗口 / 弹窗）
                 // 依赖稳定状态决定"销毁还是复用"，停在中间态会让面板既显示不出来也关不掉。
@@ -226,13 +243,128 @@ namespace CandyUI
                 // 没配置转场：直接隐藏，行为和以前一样。
                 gameObject.SetActive(false);
                 State = UIPanelState.Hidden;
+                _hideTask = Task.CompletedTask;
                 return;
             }
 
             // 有转场：先播退场，播完再 SetActive(false)。
             // 用独立的 CTS，这样"窗口被快速切回来"时可以取消这次退场。
             _transitionCts = new CancellationTokenSource();
-            RunTransitionOutAsync(transition, _transitionCts.Token);
+            _hideTask = RunTransitionOutAsync(transition, _transitionCts.Token);
+        }
+
+        /// <summary>
+        /// 等待隐藏（含退场动画）完成；未在隐藏中时立即完成。
+        /// 窗口切换用它保证"旧窗口退场播完再显示新窗口"。
+        /// </summary>
+        internal Task HideAsync()
+        {
+            if (State == UIPanelState.Hiding && _hideTask != null)
+                return _hideTask;
+
+            return Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// 由 UIManager 调用：关闭面板（播完退场后再销毁或入缓存），返回关闭流程 Task。
+        /// 正在关闭时返回同一个 Task，保证退场动画只播一次；animateOut=false 时同步关完。
+        /// </summary>
+        internal Task InternalCloseAsync(PanelCloseReason reason, bool animateOut, bool destroyInstance)
+        {
+            if (State == UIPanelState.Closed)
+                return Task.CompletedTask;
+
+            // 只有"正在关闭"才复用旧 Task：KeepInstance 入缓存后同一个实例还会被复用/再次关闭，
+            // 那时 State 是 Hidden/Visible，必须重新走一遍关闭流程（缓存 Task 会直接完成、什么都关不掉）。
+            if (State == UIPanelState.Closing && _closeTask != null)
+                return _closeTask;
+
+            _closeTask = CloseCoreAsync(reason, animateOut, destroyInstance);
+            return _closeTask;
+        }
+
+        /// <summary>
+        /// 等待本次关闭流程结束（退场动画 + 销毁/入缓存）；未在关闭中时立即完成。
+        /// </summary>
+        public Task WaitForCloseAsync()
+        {
+            if (State == UIPanelState.Closing && _closeTask != null)
+                return _closeTask;
+
+            return Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// 关闭流程本体：先进入 Closing 并取消入场动画，播完退场后按 destroyInstance 销毁或入缓存。
+        /// 动画异常/取消都不会中断关闭，保证面板最终一定会落到 Closed 或 Hidden。
+        /// </summary>
+        private async Task CloseCoreAsync(PanelCloseReason reason, bool animateOut, bool destroyInstance)
+        {
+            MarkClosing();
+
+            if (animateOut && Transition != null)
+            {
+                CancellationTokenSource cts = new CancellationTokenSource();
+                _closeCts = cts;
+                try
+                {
+                    await Transition.PlayOutAsync(this, cts.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    // 退场被打断（例如对象即将销毁）视为直接完成，关闭流程继续。
+                }
+                catch (Exception exception)
+                {
+                    // 关闭流程不能被动画异常卡住：记录后继续。
+                    Debug.LogException(exception);
+                }
+                finally
+                {
+                    cts.Dispose();
+
+                    if (ReferenceEquals(_closeCts, cts))
+                        _closeCts = null;
+                }
+            }
+
+            if (this == null)
+                return;
+
+            gameObject.SetActive(false);
+
+            if (destroyInstance)
+            {
+                InternalClose();
+            }
+            else
+            {
+                // KeepInstance：不触发 OnClose，进缓存前先执行 OnSleep。
+                State = UIPanelState.Hidden;
+                InternalSleep();
+            }
+
+            OnClosed();
+        }
+
+        /// <summary>
+        /// 进入 Closing：必要时补触发 OnHide（Visible/Showing 才触发，Hidden/Hiding 已经触发过），
+        /// 并取消正在播的入场/隐藏动画，把控制权交给关闭流程。
+        /// </summary>
+        private void MarkClosing()
+        {
+            UIPanelState previous = State;
+            State = UIPanelState.Closing;
+
+            if (previous == UIPanelState.Visible || previous == UIPanelState.Showing)
+            {
+                OnHide();
+
+                if (Presenter != null)
+                    Presenter.OnHide();
+            }
+
+            CancelTransition();
         }
 
         /// <summary>由 UIManager 调用：关闭面板，执行 OnClose。之后由 UIManager 决定是否销毁。</summary>
@@ -241,8 +373,6 @@ namespace CandyUI
             if (State == UIPanelState.Closed)
                 return;
 
-            // 关闭时直接取消退场：本版是瞬切销毁；
-            // 以后如果要做"关闭也播完"，需要把销毁延后到 PlayOutAsync 之后。
             CancelTransition();
             OnClose();
 
@@ -274,11 +404,9 @@ namespace CandyUI
 
         /// <summary>
         /// 退场播完后才真正隐藏；期间面板又被 Show 时会取消这次隐藏。
-        ///
-        /// async void 只用于"框架内部的事件式入口"：
-        /// 没有调用方 await 它，所以必须自己 try/catch，异常不能丢。
+        /// 返回的 Task 供 HideAsync 等待（取消也算完成，调用方不必区分）。
         /// </summary>
-        private async void RunTransitionOutAsync(IPanelTransition transition, CancellationToken cancellationToken)
+        private async Task RunTransitionOutAsync(IPanelTransition transition, CancellationToken cancellationToken)
         {
             try
             {
@@ -330,10 +458,17 @@ namespace CandyUI
             _transitionCts = null;
         }
 
-        /// <summary>面板被销毁时兜底：取消转场，避免协程/回调还在等一个已经不存在的对象。</summary>
+        /// <summary>面板被销毁时兜底：取消转场与关闭动画，避免协程/回调还在等一个已经不存在的对象。</summary>
         private void OnDestroy()
         {
             CancelTransition();
+
+            if (_closeCts != null)
+            {
+                _closeCts.Cancel();
+                _closeCts.Dispose();
+                _closeCts = null;
+            }
         }
 
         #endregion
@@ -449,6 +584,14 @@ namespace CandyUI
 
         /// <summary>关闭前执行：释放自己创建的非托管资源、注销全局事件。</summary>
         protected virtual void OnClose()
+        {
+        }
+
+        /// <summary>
+        /// 本次关闭流程真正结束（退场动画播完、状态已落到 Closed 或 Hidden）时执行。
+        /// 与 OnClose 的区别：OnClose 只在实例即将销毁时调用；OnClosed 在 KeepInstance 入缓存时也会触发。
+        /// </summary>
+        protected virtual void OnClosed()
         {
         }
 
