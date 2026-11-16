@@ -1,13 +1,18 @@
 // 职责：扫描所有带 [UIPanel] 的面板类型，生成 PanelKeys 常量文件；域重载后自动检查，内容没变不写文件。
-// 依赖：UnityEditor.TypeCache（类型索引，能扫到 Assembly-CSharp）、AssetDatabase（导入生成文件）、PanelValidator（生成后校验）。
+// 依赖：UnityEditor.TypeCache（类型索引，能扫到 Assembly-CSharp）、AssetDatabase（导入生成文件）、PanelValidator（生成后校验）、
+//       PackageInfo（按 Runtime 程序集定位包根目录：本仓库是 UPM 包，可能装在 Packages/ 而不是 Assets/ 下；
+//       用 using 别名指向 UnityEditor.PackageManager.PackageInfo，避免和同名的 UnityEditor.PackageInfo 冲突）。
 // 过滤：只收集运行时代码里的面板类型，测试程序集与编辑器程序集一律跳过（见 ShouldSkipAssembly）。
 // 约束：生成文件 UTF-8 无 BOM、4 空格缩进、LF 换行、按成员名 ordinal 排序，保证重复生成字节一致。
+// 只读包：从 git URL 安装的包落在 Library/PackageCache 且只读，此时跳过写入并给提示，不抛异常。
+// 日志：本文件属于 Editor 程序集，访问不到 Runtime 的 internal CandyUILog，统一用带 "[CandyUI] " 前缀的 Debug 输出。
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using System.Text;
 using UnityEditor;
+using PackageInfo = UnityEditor.PackageManager.PackageInfo;
 using UnityEngine;
 
 namespace CandyUI
@@ -21,11 +26,14 @@ namespace CandyUI
     [InitializeOnLoad]
     public static class PanelKeyGenerator
     {
-        /// <summary>生成文件所在目录；生成文件要提交进仓库，保证程序集首次编译就有 PanelKeys。</summary>
-        internal const string GeneratedFolder = "Assets/CandyUIFramework/Runtime/Core/Generated";
+        /// <summary>生成文件在包内的相对目录（以包根为基准）；生成文件要提交进仓库，保证程序集首次编译就有 PanelKeys。</summary>
+        internal const string GeneratedFolderInPackage = "Runtime/Core/Generated";
 
-        /// <summary>生成文件路径；该文件由本生成器独占，禁止手改。</summary>
-        internal const string GeneratedFilePath = GeneratedFolder + "/PanelKeys.g.cs";
+        /// <summary>兜底生成目录：框架被整体拷进 Assets/ 的旧用法（包不在 Packages/ 下）时使用。</summary>
+        internal const string LegacyGeneratedFolder = "Assets/CandyUIFramework/Runtime/Core/Generated";
+
+        /// <summary>生成文件名；该文件由本生成器独占，禁止手改。</summary>
+        internal const string GeneratedFileName = "PanelKeys.g.cs";
 
         /// <summary>UTF-8 无 BOM 编码，与仓库其它 .cs 文件一致。</summary>
         private static readonly Encoding Utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
@@ -67,9 +75,18 @@ namespace CandyUI
         /// </summary>
         internal static void Generate(bool forceWrite, bool validate)
         {
+            string generatedFilePath = ResolveGeneratedFilePath();
+            string absolutePath = ToAbsolutePath(generatedFilePath);
+
+            // 只读包（git URL 安装 → Library/PackageCache）写盘会失败；打一条提示直接跳过，不打断宿主工程。
+            if (IsInsidePackageCache(absolutePath))
+            {
+                Debug.LogWarning("[CandyUI] 包安装自 PackageCache 且为只读，已跳过 PanelKeys 生成；请在本地 file: 包或嵌入式包中生成后再发布。");
+                return;
+            }
+
             List<PanelEntry> entries = CollectEntries(out _);
             string source = BuildSource(entries);
-            string absolutePath = ToAbsolutePath(GeneratedFilePath);
 
             bool changed = !IsSameContent(absolutePath, source);
             if (!changed && !forceWrite)
@@ -79,10 +96,10 @@ namespace CandyUI
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(absolutePath));
                 File.WriteAllText(absolutePath, source, Utf8NoBom);
-                AssetDatabase.ImportAsset(GeneratedFilePath, ImportAssetOptions.ForceUpdate);
+                AssetDatabase.ImportAsset(generatedFilePath, ImportAssetOptions.ForceUpdate);
             }
 
-            Debug.Log($"[CandyUI] 已生成 {entries.Count} 个面板地址常量：{GeneratedFilePath}");
+            Debug.Log($"[CandyUI] 已生成 {entries.Count} 个面板地址常量：{generatedFilePath}");
 
             if (validate)
                 PanelValidator.RunInternal(showDialog: false);
@@ -246,12 +263,41 @@ namespace CandyUI
 
         #region 生成文件与工具
 
+        /// <summary>
+        /// 解析生成目录的资产路径：优先按 Runtime 程序集所在包定位（形如 "Packages/com.cherryxxh.candyui/Runtime/Core/Generated"），
+        /// 找不到包（框架被拷进 Assets/ 的旧用法）时退回 LegacyGeneratedFolder 常量。
+        /// </summary>
+        internal static string ResolveGeneratedFolder()
+        {
+            PackageInfo packageInfo = PackageInfo.FindForAssembly(typeof(UIRoot).Assembly);
+            if (packageInfo != null && !string.IsNullOrEmpty(packageInfo.assetPath))
+                return packageInfo.assetPath + "/" + GeneratedFolderInPackage;
+
+            return LegacyGeneratedFolder;
+        }
+
+        /// <summary>解析生成文件的资产路径；菜单、导入与日志都用它。</summary>
+        internal static string ResolveGeneratedFilePath()
+        {
+            return ResolveGeneratedFolder() + "/" + GeneratedFileName;
+        }
+
+        /// <summary>
+        /// 生成路径是否位于 Library/PackageCache（从 git URL 安装的包只在缓存里且只读）。
+        /// 用带分隔符的相对段匹配，避免误判名字里恰好含 PackageCache 的普通目录。
+        /// </summary>
+        internal static bool IsInsidePackageCache(string absolutePath)
+        {
+            string normalizedPath = absolutePath.Replace('\\', '/');
+            return normalizedPath.IndexOf("/Library/PackageCache/", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
         /// <summary>拼出 PanelKeys.g.cs 全文；不含时间戳等易变内容，保证同样输入得到同样字节。</summary>
         private static string BuildSource(List<PanelEntry> entries)
         {
             var builder = new StringBuilder();
             builder.Append("// <auto-generated>\n");
-            builder.Append("// 本文件由 Assets/CandyUIFramework/Editor/PanelKeyGenerator.cs 自动生成，请勿手动修改。\n");
+            builder.Append("// 本文件由包内 Editor/PanelKeyGenerator.cs 自动生成，请勿手动修改。\n");
             builder.Append("// 修改面板地址后请执行菜单 CandyUI/生成/面板地址常量。\n");
             builder.Append("// </auto-generated>\n");
             builder.Append("namespace CandyUI\n{\n    public static class PanelKeys\n    {\n");
@@ -271,11 +317,11 @@ namespace CandyUI
             return address.Replace("\\", "\\\\").Replace("\"", "\\\"");
         }
 
-        /// <summary>把 "Assets/..." 资源路径转成绝对路径；不依赖 Unity 进程的工作目录。</summary>
+        /// <summary>把资产路径（"Assets/..." 或 "Packages/..."）转成绝对路径；以工程根目录为基准，不依赖 Unity 进程的工作目录。</summary>
         private static string ToAbsolutePath(string assetPath)
         {
-            string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-            return Path.Combine(projectRoot, assetPath.Replace('/', Path.DirectorySeparatorChar));
+            string projectRoot = Path.GetDirectoryName(Application.dataPath);
+            return Path.GetFullPath(Path.Combine(projectRoot, assetPath.Replace('/', Path.DirectorySeparatorChar)));
         }
 
         /// <summary>逐字节比较磁盘文件与期望内容，BOM/换行差异也算不同，避免静默残留不一致。</summary>
