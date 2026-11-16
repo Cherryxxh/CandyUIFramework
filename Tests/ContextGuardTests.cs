@@ -44,7 +44,8 @@ namespace CandyUI.Tests
                 });
 
                 Assert.IsNotNull(framework.Root, "应创建出新的 UIRoot");
-                Assert.IsNotNull(EventSystem.current, "配置要求自动创建时应有 EventSystem");
+                // EditMode 下 EventSystem 的 OnEnable 不会执行，EventSystem.current 仍为 null，只能按场景实例数断言。
+                Assert.AreEqual(1, Object.FindObjectsOfType<EventSystem>(true).Length, "配置要求自动创建时应建出一个 EventSystem");
             }
             finally
             {
@@ -65,7 +66,7 @@ namespace CandyUI.Tests
             {
                 framework = UIFramework.Create(new UIRootConfig { CreateEventSystemIfMissing = false });
                 Assert.IsNotNull(framework.Root, "应创建出新的 UIRoot");
-                Assert.IsNull(EventSystem.current, "配置关闭自动创建时不应生成 EventSystem");
+                Assert.AreEqual(0, Object.FindObjectsOfType<EventSystem>(true).Length, "配置关闭自动创建时不应生成 EventSystem");
             }
             finally
             {
