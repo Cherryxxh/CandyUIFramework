@@ -2,6 +2,12 @@
 
 本包遵循语义化版本，版本号与 `package.json` 保持一致。
 
+## [1.1.0] - 2026-11-16
+
+- 新增 `Extras/YooAsset`：把 YooAsset 3.0.7 适配器（`YooAssetLoader` / `YooAssetHandle`，程序集 `CandyUIFramework.YooAsset`）并入本包，安装后即可直接用 YooAsset 加载界面。
+- `package.json` 增加依赖 `com.tuyoogame.yooasset: 3.0.7`；宿主工程需配置 OpenUPM scoped registry（README「前置：配置 OpenUPM 源」）。
+- 示例工程 MakeUiFrame 不再各自维护一份适配器，改为直接使用包内版本。
+
 ## [1.0.0] - 2026-11-16
 
 首次发布（从示例工程 MakeUiFrame 的框架目录独立为 UPM 包 `com.cherryxxh.candyui`）。
