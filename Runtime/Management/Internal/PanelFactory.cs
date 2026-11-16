@@ -107,7 +107,11 @@ namespace CandyUI
             // 框架只记录并照常实例化，绝不代加 Canvas，也不改 renderMode/overrideSorting/sortingOrder。
             bool hasOwnCanvas = prefab.GetComponent<Canvas>() != null;
 
-            UIRoot root = UIRoot.EnsureUIRoot();
+            // 根节点优先取所属上下文的（多套 UI 上下文各自独立）；没有上下文时才回落到全局根。
+            UIRoot root = _owner.Framework != null ? _owner.Framework.Root : null;
+            if (root == null)
+                root = UIRoot.EnsureUIRoot();
+
             RectTransform layerRoot = root.GetLayerRoot(layer);
 
             // worldPositionStays: false —— 保持 Prefab 里的局部布局，否则会按世界坐标重新计算出现偏移。

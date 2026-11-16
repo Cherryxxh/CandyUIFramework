@@ -419,7 +419,11 @@ namespace CandyUI
             if (_mask != null)
                 return _mask;
 
-            UIRoot root = UIRoot.EnsureUIRoot();
+            // 遮罩优先取所属上下文的根节点（多套 UI 上下文各自独立）；没有上下文时才回落到全局根。
+            UIRoot root = _panels.Framework != null ? _panels.Framework.Root : null;
+            if (root == null)
+                root = UIRoot.EnsureUIRoot();
+
             _mask = root.EnsurePopupMask();
             return _mask;
         }

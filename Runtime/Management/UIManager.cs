@@ -46,7 +46,7 @@ namespace CandyUI
             get
             {
                 if (s_defaultFramework == null)
-                    s_defaultFramework = new UIFramework(s_panels, s_windows, s_popups);
+                    s_defaultFramework = new UIFramework(s_panels, s_windows, s_popups, isDefault: true);
 
                 return s_defaultFramework;
             }
