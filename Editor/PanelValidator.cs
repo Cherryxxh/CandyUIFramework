@@ -30,7 +30,7 @@ namespace CandyUI
             RunInternal(showDialog: true);
         }
 
-        /// <summary>校验主流程：类型 → 地址 → Prefab → 命名 → 弹窗配置提示 → 汇总。</summary>
+        /// <summary>校验主流程：类型 → 地址 → Prefab → 命名 → 弹窗配置提示 → 汇总；扫描时已跳过测试/编辑器程序集。</summary>
         internal static void RunInternal(bool showDialog)
         {
             _errorCount = 0;

@@ -1,5 +1,6 @@
 // 职责：扫描所有带 [UIPanel] 的面板类型，生成 PanelKeys 常量文件；域重载后自动检查，内容没变不写文件。
 // 依赖：UnityEditor.TypeCache（类型索引，能扫到 Assembly-CSharp）、AssetDatabase（导入生成文件）、PanelValidator（生成后校验）。
+// 过滤：只收集运行时代码里的面板类型，测试程序集与编辑器程序集一律跳过（见 ShouldSkipAssembly）。
 // 约束：生成文件 UTF-8 无 BOM、4 空格缩进、LF 换行、按成员名 ordinal 排序，保证重复生成字节一致。
 using System;
 using System.Collections.Generic;
@@ -111,12 +112,42 @@ namespace CandyUI
             return entries;
         }
 
-        /// <summary>用 TypeCache 扫出所有带 [UIPanel] 的类型；按完整类型名 ordinal 排序保证遍历顺序稳定。</summary>
+        /// <summary>用 TypeCache 扫出带 [UIPanel] 的类型（跳过测试/编辑器程序集）；按完整类型名 ordinal 排序保证顺序稳定。</summary>
         internal static List<Type> GetAttributedTypes()
         {
-            var types = new List<Type>(TypeCache.GetTypesWithAttribute<UIPanelAttribute>());
+            var types = new List<Type>();
+            foreach (Type type in TypeCache.GetTypesWithAttribute<UIPanelAttribute>())
+            {
+                if (type.Assembly != null && ShouldSkipAssembly(type.Assembly))
+                    continue;
+                types.Add(type);
+            }
+
             types.Sort((left, right) => string.CompareOrdinal(left.FullName, right.FullName));
             return types;
+        }
+
+        /// <summary>
+        /// 判断程序集是否不参与生成/校验：测试程序集（如 CandyUIFramework.Tests）与编辑器程序集
+        /// 里的面板不会作为运行时面板打开，混进 PanelKeys 只会制造 Resources 警告。
+        /// </summary>
+        internal static bool ShouldSkipAssembly(Assembly assembly)
+        {
+            if (assembly == null || assembly.IsDynamic)
+                return true;
+
+            string name = assembly.GetName().Name;
+            if (string.IsNullOrEmpty(name))
+                return true;
+
+            // 测试程序集标记：名称含 Tests（CandyUIFramework.Tests 等）；测试假面板由 FakeAssetLoader 现造，没有 Prefab。
+            if (name.IndexOf("Tests", StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+
+            // 编辑器程序集：Assembly-CSharp-Editor(-firstpass)、*.Editor、UnityEditor.*；这些程序集只在编辑期存在。
+            return name.StartsWith("Assembly-CSharp-Editor", StringComparison.OrdinalIgnoreCase)
+                || name.EndsWith(".Editor", StringComparison.OrdinalIgnoreCase)
+                || name.StartsWith("UnityEditor", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>读取特性实例；构造参数非法（如空地址）会抛异常，这里捕获后交给校验器报错，不中断整次扫描。</summary>
