@@ -271,4 +271,22 @@ namespace CandyUI.Tests
             throw new System.InvalidOperationException("[Test] KeepInstance 重开 OnShow 故意抛出的异常");
         }
     }
+
+    /// <summary>同类型多实例用例用普通面板：不同实例名可同时打开。</summary>
+    [UIPanel("CandyUITests/MultiInstancePanel")]
+    public sealed class MultiInstanceTestPanel : TestPanelBase
+    {
+    }
+
+    /// <summary>同类型多实例用例用 KeepInstance 面板：关闭后按实例名缓存，可复用同一实例。</summary>
+    [UIPanel("CandyUITests/MultiInstanceKeepInstancePanel", closeBehavior: PanelCloseBehavior.KeepInstance)]
+    public sealed class MultiInstanceKeepInstanceTestPanel : TestPanelBase
+    {
+    }
+
+    /// <summary>同类型多实例用例用窗口面板：不同实例名可同时存在于窗口栈。</summary>
+    [UIPanel("CandyUITests/MultiInstanceWindow", UILayer.Window)]
+    public sealed class MultiInstanceWindowTestPanel : TestPanelBase
+    {
+    }
 }

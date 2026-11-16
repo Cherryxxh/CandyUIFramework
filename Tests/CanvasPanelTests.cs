@@ -87,6 +87,7 @@ namespace CandyUI.Tests
 
         /// <summary>
         /// 反射读取已打开面板档案（internal UIPanelInfo）里的 HasOwnCanvas 值。
+        /// 打开表已改为按 PanelKey（类型 + 实例名）索引，这里按 PanelType 字段扫值定位默认实例。
         /// </summary>
         private static bool GetHasOwnCanvas(Type panelType)
         {
@@ -95,7 +96,17 @@ namespace CandyUI.Tests
             IDictionary panels = dicOpenedPanels as IDictionary;
             Assert.NotNull(panels, "PanelService._dicOpenedPanels 不是字典，反射辅助需要同步更新");
 
-            object info = panels[panelType];
+            object info = null;
+            foreach (object candidate in panels.Values)
+            {
+                object candidateType = GetInstanceField(candidate, "PanelType");
+                if (ReferenceEquals(candidateType, panelType))
+                {
+                    info = candidate;
+                    break;
+                }
+            }
+
             Assert.NotNull(info, $"面板 {panelType.Name} 不在打开表里，无法读取 HasOwnCanvas");
             object hasOwnCanvas = GetInstanceField(info, "HasOwnCanvas");
             return (bool)hasOwnCanvas;
