@@ -30,13 +30,25 @@ namespace CandyUI
         /// </summary>
         private int _cacheGeneration;
         /// <summary>
+        /// 这套服务所属的 UI 上下文；由 UIFramework 构造时绑定，null 表示还没绑定。
+        /// PanelFactory 创建面板时把引用写进 UIPanel，关闭自路由才能回到正确的上下文。
+        /// </summary>
+        internal UIFramework Framework { get; private set; }
+        /// <summary>
+        /// 绑定（或解绑，传 null）所属的 UI 上下文；只由 UIFramework 构造时调用，不做其他状态变更。
+        /// </summary>
+        internal void BindFramework(UIFramework framework)
+        {
+            Framework = framework;
+        }
+        /// <summary>
         /// 装配三个协作者：在途打开状态交给 PanelOpener，实例创建交给 PanelFactory，
         /// 关闭编排交给 PanelCloser；本类只持有注册表与对外入口。
         /// </summary>
         internal PanelService()
         {
             _opener = new PanelOpener(CloseAbandonedPanel);
-            _factory = new PanelFactory(GetAttribute, GetCache, () => _generation, () => DefaultTransition);
+            _factory = new PanelFactory(this, GetAttribute, GetCache, () => _generation, () => DefaultTransition);
             _closer = new PanelCloser(
                 _dicOpenedPanels, _dicPanelCache, _factory, () => _generation, () => _cacheGeneration);
         }

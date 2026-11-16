@@ -6,18 +6,19 @@ using UnityEngine;
 namespace CandyUI
 {
     /// <summary>
-    /// 界面管理器 —— 框架唯一的对外入口（门面 / Facade）。
+    /// 界面管理器 —— 面向"默认上下文"的静态薄壳入口（门面 / Facade）。
     ///
-    /// 为什么要有门面？
-    /// 如果所有逻辑都堆在这一个类里，文件会越来越长，而且面板、窗口、弹窗三套状态
-    /// 互相纠缠，改窗口栈很容易碰坏弹窗队列。所以内部拆成三个服务：
-    ///   PanelService  —— 面板的加载/实例化/生命周期/注册表（底层）
-    ///   WindowService —— 窗口显示一个、隐藏一个的历史栈（依赖 Panel）
-    ///   PopupService  —— 弹窗队列 + 遮罩（依赖 Panel）
+    /// 为什么还要这一层？
+    /// 现有业务和 Demo 都按 static API 写（UIManager.OpenWindowAsync / Close / NavigateBack），
+    /// 保持这些调用完全不变，才能做到行为零变化。真正的实现与状态都在 UIFramework 实例里：
+    ///   UIFramework.Default  —— 默认上下文，包住下面三个服务（也是所有静态调用的落点）
+    ///   PanelService         —— 面板的加载/实例化/生命周期/注册表（底层）
+    ///   WindowService        —— 窗口显示一个、隐藏一个的历史栈（依赖 Panel）
+    ///   PopupService         —— 弹窗队列 + 遮罩（依赖 Panel）
     ///
     /// 依赖方向是单向的：Window/Popup -> Panel -> AssetCache。
-    /// 门面只做三件事：转发调用、按"身份"路由 Close、统一 Reset。
-    /// 公开 API 仍然只在这一个类里，业务代码不需要认识任何 Service。
+    /// 本类只做三件事：转发到 UIFramework.Default、代理 DebugLogEnabled、统一 Reset。
+    /// 面板的"按身份路由关闭"（弹窗 / 窗口 / 普通面板）已移入 UIFramework。
     ///
     /// 典型调用（"点背包按钮"）：
     ///   await UIManager.OpenWindowAsync<BagPanel>(new BagPanelData { DefaultTab = 0 });
@@ -36,12 +37,27 @@ namespace CandyUI
 
         private static readonly PopupService s_popups = new PopupService(s_panels);
 
+        // 默认上下文实例：懒创建，包住上面三个服务；不在这里创建 UIRoot（Root 属性自己懒解析）。
+        private static UIFramework s_defaultFramework;
+
+        /// <summary>默认上下文的实例门面；首次访问时创建，此后所有静态 API 都转发给它。</summary>
+        internal static UIFramework DefaultFramework
+        {
+            get
+            {
+                if (s_defaultFramework == null)
+                    s_defaultFramework = new UIFramework(s_panels, s_windows, s_popups);
+
+                return s_defaultFramework;
+            }
+        }
+
         #region 初始化
 
         /// <summary>当前使用的资源加载器。</summary>
         public static IAssetLoader AssetLoader
         {
-            get { return s_panels.AssetLoader; }
+            get { return DefaultFramework.AssetLoader; }
         }
 
         /// <summary>
@@ -51,7 +67,7 @@ namespace CandyUI
         /// </summary>
         public static bool IsLoaderReady
         {
-            get { return s_panels.IsLoaderReady; }
+            get { return DefaultFramework.IsLoaderReady; }
         }
 
         /// <summary>
@@ -61,8 +77,8 @@ namespace CandyUI
         /// </summary>
         public static IPanelTransition DefaultTransition
         {
-            get { return s_panels.DefaultTransition; }
-            set { s_panels.DefaultTransition = value; }
+            get { return DefaultFramework.DefaultTransition; }
+            set { DefaultFramework.DefaultTransition = value; }
         }
 
         /// <summary>
@@ -75,12 +91,13 @@ namespace CandyUI
         /// </summary>
         public static void InitializeAssetLoader(IAssetLoader assetLoader)
         {
-            s_panels.Initialize(assetLoader);
+            DefaultFramework.InitializeAssetLoader(assetLoader);
         }
 
         /// <summary>
         /// 关闭 Domain Reload 时（Enter Play Mode Options），静态字段不会自动清空，
         /// 会导致第二次进入 Play 时还拿着上一次的面板引用。这里主动重置三个服务。
+        /// 只重置默认上下文：目前只有这一套上下文，多实例上下文在下一阶段接入。
         /// </summary>
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void ResetStatics()
@@ -116,16 +133,7 @@ namespace CandyUI
             CancellationToken cancellationToken = default)
             where T : UIPanel
         {
-            UIPanelAttribute attribute = s_panels.GetAttribute(typeof(T));
-            if (attribute != null
-                && (attribute.Layer == UILayer.Window || attribute.Layer == UILayer.Popup))
-            {
-                throw new InvalidOperationException(
-                    $"[CandyUI] {typeof(T).Name} 声明在 {attribute.Layer} 层，" +
-                    "打开窗口请用 OpenWindowAsync，打开弹窗请用 OpenPopupAsync。");
-            }
-
-            return (T)await s_panels.OpenPanelAsync<T>(data, null, cancellationToken);
+            return await DefaultFramework.OpenPlainPanelAsync<T>(data, cancellationToken);
         }
 
         /// <summary>
@@ -143,7 +151,7 @@ namespace CandyUI
             UIPanelData data = null,
             CancellationToken cancellationToken = default) where T : UIPanel
         {
-            return (T)await s_windows.OpenWindowAsync<T>(data, cancellationToken);
+            return await DefaultFramework.OpenWindowAsync<T>(data, cancellationToken);
         }
 
         /// <summary>
@@ -160,7 +168,7 @@ namespace CandyUI
             UIPanelData data = null,
             CancellationToken cancellationToken = default) where T : UIPanel
         {
-            return (T)await s_popups.OpenPopupAsync<T>(data, cancellationToken);
+            return await DefaultFramework.OpenPopupAsync<T>(data, cancellationToken);
         }
 
         #endregion
@@ -180,22 +188,7 @@ namespace CandyUI
         /// </summary>
         public static void Close(UIPanel panel, PanelCloseReason reason = PanelCloseReason.UserClose)
         {
-            if (panel == null)
-                return;
-
-            if (s_popups.IsActive(panel))
-            {
-                s_popups.ClosePopup(panel, reason);
-                return;
-            }
-
-            if (s_windows.Contains(panel))
-            {
-                s_windows.CloseWindow(panel, reason);
-                return;
-            }
-
-            s_panels.ClosePanel(panel, reason);
+            DefaultFramework.Close(panel, reason);
         }
 
         /// <summary>
@@ -204,16 +197,7 @@ namespace CandyUI
         /// </summary>
         public static async Task<bool> CloseAsync(UIPanel panel, PanelCloseReason reason = PanelCloseReason.UserClose)
         {
-            if (panel == null)
-                return false;
-
-            if (s_popups.IsActive(panel))
-                return await s_popups.ClosePopupAsync(panel, reason);
-
-            if (s_windows.Contains(panel))
-                return await s_windows.CloseWindowAsync(panel, reason);
-
-            return await s_panels.ClosePanelAsync(panel, reason);
+            return await DefaultFramework.CloseAsync(panel, reason);
         }
 
         /// <summary>
@@ -221,18 +205,14 @@ namespace CandyUI
         /// </summary>
         public static Task WaitForCloseAsync(UIPanel panel)
         {
-            return s_panels.WaitCloseAsync(panel);
+            return DefaultFramework.WaitForCloseAsync(panel);
         }
 
         /// <summary>关闭指定类型的面板（没打开时什么都不做）。</summary>
         public static void CloseOfType<T>(PanelCloseReason reason = PanelCloseReason.UserClose)
             where T : UIPanel
         {
-            if (s_panels.TryGetOpenedOfType(typeof(T), out UIPanelInfo info)
-                && info.Panel != null)
-            {
-                Close(info.Panel, reason);
-            }
+            DefaultFramework.CloseOfType<T>(reason);
         }
 
         /// <summary>
@@ -242,25 +222,25 @@ namespace CandyUI
         /// </summary>
         public static void CloseCurrentWindow(PanelCloseReason reason = PanelCloseReason.UserClose)
         {
-            s_windows.CloseCurrentWindow(reason);
+            DefaultFramework.CloseCurrentWindow(reason);
         }
 
         /// <summary>关闭当前显示的弹窗；如果队列里还有，自动显示下一个。</summary>
         public static void CloseTopPopup()
         {
-            s_popups.CloseTopPopup();
+            DefaultFramework.CloseTopPopup();
         }
 
         /// <summary>关闭指定弹窗（"确定/取消"按钮里调 CloseSelf 也会走到这里）。</summary>
         public static void ClosePopup(UIPanel popup)
         {
-            s_popups.ClosePopup(popup);
+            DefaultFramework.ClosePopup(popup);
         }
 
         /// <summary>关闭所有弹窗并清空队列（例如切场景时）。</summary>
         public static void CloseAllPopups()
         {
-            s_popups.CloseAllPopups();
+            DefaultFramework.CloseAllPopups();
         }
 
         /// <summary>
@@ -269,23 +249,13 @@ namespace CandyUI
         /// </summary>
         public static void NavigateBack()
         {
-            if (s_popups.HasActive)
-            {
-                s_popups.CloseTopPopup();
-                return;
-            }
-
-            s_windows.CloseCurrentWindow();
+            DefaultFramework.NavigateBack();
         }
 
         /// <summary>关闭所有面板（切场景、退出战斗时常用）；立即关闭，不等退场动画。</summary>
         public static void CloseAll()
         {
-            // ForceClose 不会被界面拦截，所以先关弹窗和面板、最后清窗口栈，
-            // 避免出现"栈已经清空、窗口实例却还活着"的孤儿。
-            s_popups.CloseAllPopups();
-            s_panels.CloseAllPanels();
-            s_windows.Clear();
+            DefaultFramework.CloseAll();
         }
 
         #endregion
@@ -307,30 +277,13 @@ namespace CandyUI
         /// </summary>
         public static bool TryHidePanel(UIPanel panel)
         {
-            if (panel == null)
-                return false;
-
-            if (s_popups.IsActive(panel))
-            {
-                CandyUILog.Warn(
-                    $"弹窗不能隐藏：{panel.GetType().Name}。请使用 CloseTopPopup/ClosePopup，否则遮罩和队列会不一致。");
-                return false;
-            }
-
-            if (s_windows.Contains(panel) && !s_windows.IsTop(panel))
-            {
-                CandyUILog.Warn(
-                    $"窗口 {panel.GetType().Name} 不是栈顶，隐藏它会让下面的窗口露出来。请先返回。");
-                return false;
-            }
-
-            return s_panels.TryHide(panel);
+            return DefaultFramework.TryHidePanel(panel);
         }
 
         /// <summary>隐藏指定类型的面板；没打开或隐藏失败时返回 false。</summary>
         public static bool TryHidePanel<T>() where T : UIPanel
         {
-            return TryHidePanel(s_panels.GetOpenedOfPanel<T>());
+            return DefaultFramework.TryHidePanel<T>();
         }
 
         /// <summary>
@@ -339,24 +292,13 @@ namespace CandyUI
         /// </summary>
         public static bool TryShowPanel(UIPanel panel, UIPanelData data = null)
         {
-            if (panel == null)
-                return false;
-
-            // 非栈顶的窗口被隐藏着，直接显示会出现两个窗口同时可见。
-            if (s_windows.Contains(panel) && !s_windows.IsTop(panel))
-            {
-                CandyUILog.Warn(
-                    $"窗口 {panel.GetType().Name} 不是栈顶，请先 NavigateBack 返回，或者用 OpenWindowAsync 切换到它。");
-                return false;
-            }
-
-            return s_panels.TryShow(panel, data);
+            return DefaultFramework.TryShowPanel(panel, data);
         }
 
         /// <summary>显示指定类型的面板；没打开时返回 false。</summary>
         public static bool TryShowPanel<T>(UIPanelData data = null) where T : UIPanel
         {
-            return TryShowPanel(s_panels.GetOpenedOfPanel<T>(), data);
+            return DefaultFramework.TryShowPanel<T>(data);
         }
 
         #endregion
@@ -370,25 +312,25 @@ namespace CandyUI
         /// </summary>
         public static bool CanNavigateBack
         {
-            get { return s_popups.HasActive || s_windows.CanGoBack; }
+            get { return DefaultFramework.CanNavigateBack; }
         }
 
         /// <summary>获取已打开的面板实例，没有则返回 null。</summary>
         public static T GetOpenedPanel<T>() where T : UIPanel
         {
-            return s_panels.GetOpenedOfPanel<T>();
+            return DefaultFramework.GetOpenedPanel<T>();
         }
 
         /// <summary>面板是否处于打开状态（不包含已关闭）。</summary>
         public static bool HasOpenedPanel<T>() where T : UIPanel
         {
-            return s_panels.IsOpen<T>();
+            return DefaultFramework.HasOpenedPanel<T>();
         }
 
         /// <summary>面板是否可见（打开且没有被隐藏）。</summary>
         public static bool IsPanelVisible<T>() where T : UIPanel
         {
-            return s_panels.IsVisible<T>();
+            return DefaultFramework.IsPanelVisible<T>();
         }
 
         #endregion
@@ -405,7 +347,7 @@ namespace CandyUI
         public static async Task PreloadAsync<T>(CancellationToken cancellationToken = default)
             where T : UIPanel
         {
-            await s_panels.PreloadAsync<T>(cancellationToken);
+            await DefaultFramework.PreloadAsync<T>(cancellationToken);
         }
 
         /// <summary>
@@ -414,13 +356,13 @@ namespace CandyUI
         /// </summary>
         public static void ClearPanelCache()
         {
-            s_panels.ClearCache();
+            DefaultFramework.ClearPanelCache();
         }
 
         /// <summary>清空指定类型的保留实例。</summary>
         public static void ClearPanelCache<T>() where T : UIPanel
         {
-            s_panels.ClearCache<T>();
+            DefaultFramework.ClearPanelCache<T>();
         }
 
         #endregion
@@ -436,9 +378,7 @@ namespace CandyUI
         /// </summary>
         public static string GetDebugSnapshot()
         {
-            return s_panels.GetDebugSnapshot()
-                   + "\n" + s_windows.GetDebugSnapshot()
-                   + "\n" + s_popups.GetDebugSnapshot();
+            return DefaultFramework.GetDebugSnapshot();
         }
 
         /// <summary>

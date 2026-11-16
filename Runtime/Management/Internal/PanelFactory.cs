@@ -17,24 +17,28 @@ namespace CandyUI
     ///
     /// 不登记面板注册表：登记与 Show 失败回滚留在 PanelService，因为那需要知道打开表/缓存表状态，
     /// 也要先登记再 Show（OnShow 里重入关闭要能在打开表里找到自己）。
-    /// 依赖方向：PanelService -> PanelFactory -> AssetCache / UIRoot。
+    /// 依赖方向：PanelService -> PanelFactory -> AssetCache / UIRoot；工厂持有 PanelService 引用只为读取
+    /// 面板归属的 UI 上下文（panel.Framework），不回调登记表。
     /// </summary>
     internal sealed class PanelFactory
     {
+        private readonly PanelService _owner;
         private readonly Func<Type, UIPanelAttribute> _attributeProvider;
         private readonly Func<AssetCache> _cacheProvider;
         private readonly Func<int> _generationProvider;
         private readonly Func<IPanelTransition> _defaultTransitionProvider;
 
         /// <summary>
-        /// 注入四个只读依赖：特性查询、资源缓存、清理代号与默认转场；工厂自身不持有面板注册表。
+        /// 注入所属服务与四个只读依赖：特性查询、资源缓存、清理代号与默认转场；工厂自身不持有面板注册表。
         /// </summary>
         internal PanelFactory(
+            PanelService owner,
             Func<Type, UIPanelAttribute> attributeProvider,
             Func<AssetCache> cacheProvider,
             Func<int> generationProvider,
             Func<IPanelTransition> defaultTransitionProvider)
         {
+            _owner = owner;
             _attributeProvider = attributeProvider;
             _cacheProvider = cacheProvider;
             _generationProvider = generationProvider;
@@ -136,6 +140,8 @@ namespace CandyUI
 
             panel.Layer = layer;
             panel.Address = attribute.PrefabAddress;
+            // 记录创建它的 UI 上下文：CloseSelf 要路由回这一套（未绑定时留 null，退回默认门面）。
+            panel.Framework = _owner.Framework;
 
             if (hasOwnCanvas)
             {

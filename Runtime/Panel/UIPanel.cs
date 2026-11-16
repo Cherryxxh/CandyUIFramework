@@ -31,8 +31,14 @@ namespace CandyUI
     {
         #region 状态与属性
 
-        /// <summary>当前所在层（由 UIManager 在创建时写入）。</summary>
+        /// <summary>当前所在层（由框架在创建时写入）。</summary>
         public UILayer Layer { get; internal set; }
+
+        /// <summary>
+        /// 创建这个面板的 UI 上下文（由 PanelFactory 在创建时写入）。
+        /// null 表示没有绑定上下文（例如测试直接 new 出来的实例），关闭时退回静态默认门面。
+        /// </summary>
+        internal UIFramework Framework { get; set; }
 
         /// <summary>当前生命周期状态。</summary>
         public UIPanelState State { get; internal set; } = UIPanelState.None;
@@ -478,13 +484,17 @@ namespace CandyUI
         /// <summary>关闭自己（业务代码里点"关闭"按钮时用）。</summary>
         public void CloseSelf()
         {
-            UIManager.Close(this);
+            CloseSelf(PanelCloseReason.UserClose);
         }
 
         /// <summary>关闭自己，并指定关闭原因（一般用默认的 UserClose 即可）。</summary>
         public void CloseSelf(PanelCloseReason reason)
         {
-            UIManager.Close(this, reason);
+            // 关闭路由回创建自己的那套上下文；没有上下文时退回到默认静态门面。
+            if (Framework != null)
+                Framework.Close(this, reason);
+            else
+                UIManager.Close(this, reason);
         }
 
         /// <summary>
