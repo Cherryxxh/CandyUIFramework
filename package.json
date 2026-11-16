@@ -1,0 +1,14 @@
+{
+  "name": "com.cherryxxh.candyui",
+  "version": "1.0.0",
+  "displayName": "CandyUI Framework",
+  "description": "Attribute-driven uGUI framework for Unity: panels, window stack, popup queue, async open/close with transitions, pluggable asset loading and editor-time validation.",
+  "unity": "2022.3",
+  "author": { "name": "Cherryxxh" },
+  "keywords": ["ui", "ugui", "framework", "panel", "popup"],
+  "dependencies": {
+    "com.unity.ugui": "1.0.0",
+    "com.unity.textmeshpro": "3.0.7",
+    "com.unity.inputsystem": "1.7.0"
+  }
+}

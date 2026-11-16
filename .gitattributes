@@ -1,0 +1,5 @@
+# 纯文本仓库（无二进制资源），只做文本规范与 diff 提示，不用 LFS。
+*.cs text diff=csharp
+*.asmdef text unity-json
+*.meta text unity-yaml
+*.md text
