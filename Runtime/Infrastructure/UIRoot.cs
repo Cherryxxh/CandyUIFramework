@@ -157,7 +157,7 @@ namespace CandyUI
                 Object.DontDestroyOnLoad(gameObject);
 
             SetupCanvas();
-            EnsureEventSystem(config.CreateEventSystemIfMissing);
+            EnsureEventSystem(config);
             BuildLayerRoots();
         }
 
@@ -297,9 +297,10 @@ namespace CandyUI
 
         /// <summary>
         /// 保证场景里有 EventSystem（否则 Button 点不动）：已有就复用并补齐新版输入模块；
-        /// createIfMissing 为 false 且场景里没有时只打一条 Info，不创建（本工程只用新 Input System）。
+        /// 配置要求不自动创建且场景里没有时只打一条 Info，不创建（本工程只用新 Input System）。
+        /// 新建的 EventSystem 跟随该 root 的跨场景策略，且在 EditMode（非运行时）不调 DontDestroyOnLoad。
         /// </summary>
-        private static void EnsureEventSystem(bool createIfMissing)
+        private static void EnsureEventSystem(UIRootConfig config)
         {
             if (EventSystem.current != null)
             {
@@ -314,14 +315,18 @@ namespace CandyUI
                 return;
             }
 
-            if (!createIfMissing)
+            if (!config.CreateEventSystemIfMissing)
             {
                 Debug.Log("[CandyUI] 场景中没有 EventSystem，且配置要求不自动创建，UI 点击/导航将不可用。");
                 return;
             }
 
             GameObject go = new GameObject("[CandyUI] EventSystem", typeof(EventSystem));
-            Object.DontDestroyOnLoad(go);
+
+            // 与 Root 一致：只在运行时且配置允许时常驻；EditMode 下调用会抛 InvalidOperationException。
+            if (Application.isPlaying && config.DontDestroyOnLoad)
+                Object.DontDestroyOnLoad(go);
+
             EnsureInputModule(go);
         }
 

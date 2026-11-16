@@ -8,7 +8,7 @@ namespace CandyUI
     /// UI 框架实例门面：真正持有服务引用的实现，UIManager 只是面向默认上下文的静态薄壳。
     /// 默认上下文（Default）包住 UIManager 的三个静态服务，仍用 UIRoot.EnsureUIRoot() 解析根节点；
     /// UIFramework.Create 创建额外上下文，各自一套服务 / AssetCache / UIRoot，互不共享。
-    /// 方法签名与语义和 UIManager 一一对应；Dispose 释放上下文，默认上下文的 Root 不销毁。
+    /// 方法签名与语义和 UIManager 一一对应；Dispose 释放上下文，但默认上下文禁止 Dispose。
     /// </summary>
     public sealed class UIFramework : IDisposable
     {
@@ -136,12 +136,19 @@ namespace CandyUI
         }
 
         /// <summary>
-        /// 释放本上下文：关闭所有界面并重置面板服务（释放缓存与加载器）。
-        /// 非默认上下文额外销毁自己创建的 Root；默认上下文的 Root 可能被其他代码持有，不销毁。
-        /// 重复调用幂等；Dispose 后打开/关闭类 API 抛 ObjectDisposedException，只读查询返回清理后的空状态。
+        /// 释放本上下文：关闭所有界面、重置面板服务（释放缓存与加载器）、销毁自己创建的 Root。
+        /// 默认上下文禁止释放——静态 API 依赖它且没有重建入口，调用会抛 InvalidOperationException。
+        /// 非默认上下文重复调用幂等；Dispose 后打开/关闭类 API 抛 ObjectDisposedException，只读查询返回清理后的空状态。
         /// </summary>
         public void Dispose()
         {
+            if (IsDefault)
+            {
+                // 默认上下文释放后 UIManager 静态 API 会永久失效且无法重建，直接拒绝比留下"半个系统"更安全。
+                throw new InvalidOperationException(
+                    "默认上下文不支持 Dispose：静态 API 依赖它，释放后无法重建。需要独立生命周期请用 UIFramework.Create。");
+            }
+
             if (_disposed)
                 return;
 
@@ -151,17 +158,11 @@ namespace CandyUI
             _disposed = true;
         }
 
-        /// <summary>非默认上下文销毁自己创建的 Root；默认上下文的 Root 只打 Info 不销毁。</summary>
+        /// <summary>销毁本上下文创建的 Root；只在非默认上下文的 Dispose 里调用。</summary>
         private void ReleaseRoot()
         {
             UIRoot root = _root;
             _root = null;
-
-            if (IsDefault)
-            {
-                CandyUILog.Info("默认上下文的 Root 不会被销毁（可能被其他代码或后续静态 API 继续使用）。");
-                return;
-            }
 
             if (root != null)
                 UnityEngine.Object.Destroy(root.gameObject);
