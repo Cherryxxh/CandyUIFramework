@@ -17,7 +17,7 @@ namespace CandyUI.EditorTools
     /// 2) 建一个包 DefaultPackage；
     /// 3) 把 Demo 的 Resources 目录作为收集根（不移动文件，避免破坏 Resources 回退）；
     /// 4) 使用自定义地址规则 AddressByCandyUIDemoPath：
-    ///    Assets/CandyUI/Samples/Demo/Resources/CandyUI/Demo/HomeWindow.prefab
+    ///    Assets/CandyUIFramework/Samples/Demo/Resources/CandyUI/Demo/HomeWindow.prefab
     ///    -> CandyUI/Demo/HomeWindow
     ///    正好等于 [UIPanel("CandyUI/Demo/HomeWindow")] 里写的字符串，
     ///    所以业务代码一行都不用改。
@@ -30,7 +30,7 @@ namespace CandyUI.EditorTools
     {
         private const string PackageName = "DefaultPackage";
         private const string GroupName = "UIDemo";
-        private const string CollectPath = "Assets/CandyUI/Samples/Demo/Resources";
+        private const string CollectPath = "Assets/CandyUIFramework/Samples/Demo/Resources";
 
         /// <summary>
         /// 菜单入口：补全局配置，创建/修正 DefaultPackage 的收集器包、组与收集规则，使地址与 [UIPanel] 对齐。
@@ -156,7 +156,7 @@ namespace CandyUI.EditorTools
     /// </summary>
     public class AddressByCandyUIDemoPath : IAddressRule
     {
-        private const string CollectRoot = "Assets/CandyUI/Samples/Demo/Resources/";
+        private const string CollectRoot = "Assets/CandyUIFramework/Samples/Demo/Resources/";
 
         /// <summary>
         /// 去掉收集根路径与文件扩展名，得到与 [UIPanel] 地址一致的 location。

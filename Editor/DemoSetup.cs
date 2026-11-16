@@ -1,6 +1,6 @@
 // 职责：菜单工具，生成 CandyUI Demo 的 10 个面板 Prefab 与演示场景。
 // 依赖：UnityEditor API（PrefabUtility / EditorSceneManager）与 CandyUI.Demo 下的面板类型。
-// 限制：生成物放在 Assets/CandyUI/Samples/Demo 下；覆盖前先让用户确认保存当前场景。
+// 限制：生成物放在 Assets/CandyUIFramework/Samples/Demo 下；覆盖前先让用户确认保存当前场景。
 using System.IO;
 using CandyUI.Demo;
 using UnityEditor;
@@ -23,7 +23,7 @@ namespace CandyUI.EditorTools
     /// </summary>
     public static class DemoSetup
     {
-        private const string DemoFolder = "Assets/CandyUI/Samples/Demo";
+        private const string DemoFolder = "Assets/CandyUIFramework/Samples/Demo";
         private const string ResourcesFolder = DemoFolder + "/Resources/CandyUI/Demo";
         private const string ScenePath = DemoFolder + "/CandyUIDemo.unity";
 
