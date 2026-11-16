@@ -5,7 +5,7 @@
 - UPM 包名：`com.cherryxxh.candyui`，C# 命名空间：`CandyUI`
 - 包版本：1.0.0（见 [CHANGELOG.md](CHANGELOG.md)）
 - 示例工程：Demo 场景、Demo 脚本与 YooAsset 适配器在示例工程 **MakeUiFrame** 中，本包只提供框架代码
-- 交接文档：[Documents/CandyUIFramework_交接文档.md](Documents/CandyUIFramework_交接文档.md)（架构、核心机制、完整 API、FAQ、已知限制）
+- 交接文档：正文在示例工程仓库 [`MakeUiFrame/docs/CandyUIFramework_交接文档.md`](https://github.com/Cherryxxh/MakeUiFrame/blob/main/docs/CandyUIFramework_%E4%BA%A4%E6%8E%A5%E6%96%87%E6%A1%A3.md)（架构、核心机制、完整 API、FAQ、已知限制）；本包 `Documents/` 只留镜像说明
 
 ## 特性
 
@@ -217,7 +217,7 @@ com.cherryxxh.candyui/
 │   └── Infrastructure/          # UIRoot、UIRootConfig、日志
 ├── Editor/                      # CandyUIFramework.Editor（Editor-only）：地址生成器、引用校验
 ├── Tests/                       # CandyUIFramework.Tests（EditMode，nunit）
-└── Documents/                   # 交接文档
+└── Documents/                   # 交接文档镜像说明（正文在示例工程）
 ```
 
 架构依赖单向：`UIManager`（静态门面）→ `UIFramework`（实例）→ `PanelService` / `WindowService` / `PopupService` → `PanelOpener` + `PanelFactory` + `PanelCloser` → `AssetCache` → `IAssetLoader`。
@@ -255,7 +255,7 @@ com.cherryxxh.candyui/
 
 ## 文档与示例
 
-- 交接文档：[Documents/CandyUIFramework_交接文档.md](Documents/CandyUIFramework_交接文档.md) —— 架构总览、核心机制、新建界面流程、YooAsset 接入、调试方法、FAQ、文件职责表。
+- 交接文档（示例工程仓库）：[docs/CandyUIFramework_交接文档.md](https://github.com/Cherryxxh/MakeUiFrame/blob/main/docs/CandyUIFramework_%E4%BA%A4%E6%8E%A5%E6%96%87%E6%A1%A3.md) —— 架构总览、核心机制、新建界面流程、YooAsset 接入、调试方法、FAQ、文件职责表。
 - 示例：Demo 场景、Demo 面板、DOTween 转场与 YooAsset 适配器见示例工程 **MakeUiFrame**（`Assets/CandyUI.YooAsset` 为适配器目录）。
 
 ## 版本
