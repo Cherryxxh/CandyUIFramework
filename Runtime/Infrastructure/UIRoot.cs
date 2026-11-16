@@ -18,6 +18,10 @@ namespace CandyUI
     /// 设置 DontDestroyOnLoad，所有界面都挂到它的层容器下。切场景 UI 不会消失，
     /// 适配参数只维护一份。
     ///
+    /// 根节点参数现在可配置（UIRootConfig）：渲染模式、相机、参考分辨率、匹配权重、排序、是否常驻。
+    /// 既可以在 Inspector 里改组件字段，也可以用 UIRoot.Create(config) 在代码里创建；
+    /// 多套 UI 上下文时只有第一个 root 占据 Instance，其余 root 各自独立工作并打一条 Info。
+    ///
     /// 层级结构（兄弟节点顺序即渲染顺序，越往下越靠上）：
     /// [CandyUI] UIRoot (Canvas + CanvasScaler + GraphicRaycaster)
     ///   ├─ Background
@@ -35,7 +39,7 @@ namespace CandyUI
     [DisallowMultipleComponent]
     public sealed class UIRoot : MonoBehaviour
     {
-        /// <summary>当前 UI 根节点。没有时用 EnsureUIRoot() 创建（框架内部）。</summary>
+        /// <summary>当前 UI 根节点：只由第一个完成初始化的 root 占据，供框架内部使用。</summary>
         internal static UIRoot Instance { get; private set; }
 
         /// <summary>根 Canvas。</summary>
@@ -44,8 +48,38 @@ namespace CandyUI
         /// <summary>根 RectTransform。</summary>
         public RectTransform RootRect { get; private set; }
 
+        /// <summary>当前生效的配置：由 Inspector 序列化字段（以及根节点名）构造并校验后的副本。</summary>
+        public UIRootConfig Config
+        {
+            get { return BuildConfig(out _); }
+        }
+
         /// <summary>弹窗遮罩（第一次打开弹窗时创建，业务代码一般不需要直接操作）。</summary>
         internal PopupMask Mask { get; private set; }
+
+        [Header("根 Canvas")]
+        [Tooltip("根 Canvas 的渲染模式；默认 ScreenSpaceOverlay，选 ScreenSpaceCamera / WorldSpace 时必须配 WorldCamera。")]
+        [SerializeField] private RenderMode _renderMode = RenderMode.ScreenSpaceOverlay;
+
+        [Tooltip("ScreenSpaceCamera / WorldSpace 使用的渲染相机；Overlay 模式忽略，其他模式缺失会回退 Overlay 并警告。")]
+        [SerializeField] private Camera _worldCamera;
+
+        [Header("适配")]
+        [Tooltip("CanvasScaler 参考分辨率；默认 1920x1080，任一维小于等于 0 时回退到默认值。")]
+        [SerializeField] private Vector2 _referenceResolution = new Vector2(1920f, 1080f);
+
+        [Tooltip("CanvasScaler 宽高匹配权重 [0,1]；默认 0.5，越界会自动 clamp。")]
+        [SerializeField, Range(0f, 1f)] private float _matchWidthOrHeight = 0.5f;
+
+        [Header("排序与生命周期")]
+        [Tooltip("根 Canvas 的 sortingOrder，用于和场景里其他 Canvas 排序；默认 0。")]
+        [SerializeField] private int _sortingOrder;
+
+        [Tooltip("是否跨场景常驻（DontDestroyOnLoad）；默认开启，只在运行时生效。")]
+        [SerializeField] private bool _dontDestroyOnLoad = true;
+
+        [Tooltip("场景里没有 EventSystem 时是否自动创建；默认开启，关闭后 UI 将无法点击与导航。")]
+        [SerializeField] private bool _createEventSystemIfMissing = true;
 
         private readonly Dictionary<UILayer, RectTransform> _dicLayerRoots =
             new Dictionary<UILayer, RectTransform>();
@@ -54,10 +88,7 @@ namespace CandyUI
 
         #region 创建与生命周期
 
-        /// <summary>
-        /// 拿到 UI 根节点；没有就创建一个。
-        /// 所有界面打开前都会调用它，业务代码一般不需要直接调用。
-        /// </summary>
+        /// <summary>拿到 UI 根节点；没有就按 UIRootConfig.Default 新建，业务代码一般不需要直接调用。</summary>
         internal static UIRoot EnsureUIRoot()
         {
             if (Instance != null)
@@ -71,76 +102,121 @@ namespace CandyUI
                 return roots[0];
             }
 
-            GameObject go = new GameObject("[CandyUI] UIRoot", typeof(RectTransform));
-            Object.DontDestroyOnLoad(go);
-            UIRoot root = go.AddComponent<UIRoot>();
-            root.InitUIRoot();
-            return root;
+            return Create(UIRootConfig.Default);
         }
 
-        /// <summary>
-        /// 场景里手动挂载时在 Awake 阶段初始化根节点；与动态创建路径共用幂等的 InitUIRoot。
-        /// </summary>
+        /// <summary>场景里手动挂载时在 Awake 阶段初始化根节点；与动态创建路径共用幂等的 InitUIRoot。</summary>
         private void Awake()
         {
             InitUIRoot();
         }
 
         /// <summary>
-        /// 初始化根节点。做成幂等的：重复调用不会重复建 Canvas/层容器。
+        /// 按配置创建并初始化一个独立 UIRoot：先关激活再挂组件写字段，保证 Awake 读到的配置完整。
+        /// 第一个完成初始化的 root 占据 Instance，后续 root 只打 Info；EditMode 不触发 Awake，故补一次 InitUIRoot。
+        /// </summary>
+        public static UIRoot Create(UIRootConfig config)
+        {
+            config = config.Validate(out string warning);
+            if (!string.IsNullOrEmpty(warning))
+                Debug.LogWarning("[CandyUI] " + warning);
+
+            GameObject go = new GameObject(config.Name, typeof(RectTransform));
+            go.SetActive(false);
+            UIRoot root = go.AddComponent<UIRoot>();
+            root.ApplyConfig(config);
+            go.SetActive(true);
+
+            // Play 模式下上面的 SetActive 已触发 Awake 完成初始化；EditMode（编辑器/EditMode 测试）不会触发 Awake，这里补一次。
+            root.InitUIRoot();
+            return root;
+        }
+
+        /// <summary>
+        /// 初始化根节点（幂等）：应用配置、建 Canvas/EventSystem/层容器。
+        /// Instance 只由第一个初始化的 root 占据；后续 root 仍会完成自身初始化，但不覆盖 Instance、也不再销毁自己。
         /// </summary>
         internal void InitUIRoot()
         {
             if (_isSetup)
                 return;
 
-            if (Instance != null && Instance != this)
-            {
-                Debug.LogWarning("[CandyUI] 场景里存在多个 UIRoot，已销毁重复的那个。");
-                Destroy(gameObject);
-                return;
-            }
-
             _isSetup = true;
-            Instance = this;
             RootRect = (RectTransform)transform;
 
-            if (transform.parent == null && Application.isPlaying)
+            UIRootConfig config = BuildConfig(out string warning);
+            if (!string.IsNullOrEmpty(warning))
+                Debug.LogWarning("[CandyUI] " + warning);
+
+            if (Instance == null)
+                Instance = this;
+            else if (Instance != this)
+                Debug.Log($"[CandyUI] 检测到额外的 UIRoot（多套 UI 上下文）：{name}");
+
+            if (transform.parent == null && Application.isPlaying && config.DontDestroyOnLoad)
                 Object.DontDestroyOnLoad(gameObject);
 
             SetupCanvas();
-            EnsureEventSystem();
+            EnsureEventSystem(config.CreateEventSystemIfMissing);
             BuildLayerRoots();
+        }
+
+        /// <summary>把配置写进序列化字段，供 Awake/InitUIRoot 读取；只在 Create 内部调用。</summary>
+        private void ApplyConfig(UIRootConfig config)
+        {
+            _renderMode = config.RenderMode;
+            _worldCamera = config.WorldCamera;
+            _referenceResolution = config.ReferenceResolution;
+            _matchWidthOrHeight = config.MatchWidthOrHeight;
+            _sortingOrder = config.SortingOrder;
+            _dontDestroyOnLoad = config.DontDestroyOnLoad;
+            _createEventSystemIfMissing = config.CreateEventSystemIfMissing;
+        }
+
+        /// <summary>由序列化字段（以及根节点名）构造配置并校验；warning 交给调用方统一打日志。</summary>
+        private UIRootConfig BuildConfig(out string warning)
+        {
+            UIRootConfig config = new UIRootConfig
+            {
+                RenderMode = _renderMode,
+                WorldCamera = _worldCamera,
+                ReferenceResolution = _referenceResolution,
+                MatchWidthOrHeight = _matchWidthOrHeight,
+                SortingOrder = _sortingOrder,
+                DontDestroyOnLoad = _dontDestroyOnLoad,
+                CreateEventSystemIfMissing = _createEventSystemIfMissing,
+                Name = gameObject.name,
+            };
+            return config.Validate(out warning);
         }
 
         #endregion
 
         #region 画布与层
 
-
-        /// <summary>
-        /// 配置根 Canvas/CanvasScaler/GraphicRaycaster：参考分辨率 1920x1080、match=0.5，横竖屏都不易变形，缺失组件自动补挂。
-        /// </summary>
+        /// <summary>按 Config 配置根 Canvas/CanvasScaler/GraphicRaycaster；缺失组件自动补挂，已有组件不强改。</summary>
         private void SetupCanvas()
         {
+            UIRootConfig config = Config;
+
             Canvas canvas = GetComponent<Canvas>();
             if (canvas == null)
                 canvas = gameObject.AddComponent<Canvas>();
 
-            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.renderMode = config.RenderMode;
+            // Overlay 模式不需要相机；显式置 null，避免 Inspector 里残留的旧引用让 Canvas 处于半配置状态。
+            canvas.worldCamera = config.RenderMode == RenderMode.ScreenSpaceOverlay ? null : config.WorldCamera;
+            canvas.sortingOrder = config.SortingOrder;
             canvas.pixelPerfect = false;
             Canvas = canvas;
 
-            // CanvasScaler：让 UI 在不同分辨率下按比例缩放。
-            // 1920x1080 是 PC/竖屏手游常见的参考分辨率；match=0.5 表示
-            // 宽高变化各占一半权重，横竖屏都不至于变形太厉害。
             CanvasScaler scaler = GetComponent<CanvasScaler>();
             if (scaler == null)
                 scaler = gameObject.AddComponent<CanvasScaler>();
 
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = new Vector2(1920f, 1080f);
-            scaler.matchWidthOrHeight = 0.5f;
+            scaler.referenceResolution = config.ReferenceResolution;
+            scaler.matchWidthOrHeight = config.MatchWidthOrHeight;
 
             if (GetComponent<GraphicRaycaster>() == null)
                 gameObject.AddComponent<GraphicRaycaster>();
@@ -220,16 +296,10 @@ namespace CandyUI
 
 
         /// <summary>
-        /// 保证场景里有 EventSystem，否则 Button 点不动。
-        ///
-        /// 本项目只使用新版 Input System（Project Settings → Active Input Handling =
-        /// Input System Package (New)），所以统一挂 InputSystemUIInputModule。
-        ///
-        /// 注意：代码创建组件不会走 Inspector 的 Reset()，必须手动
-        /// AssignDefaultActions()，否则点按/导航/提交这些 UI 动作是空的，
-        /// 界面照样点不动。
+        /// 保证场景里有 EventSystem（否则 Button 点不动）：已有就复用并补齐新版输入模块；
+        /// createIfMissing 为 false 且场景里没有时只打一条 Info，不创建（本工程只用新 Input System）。
         /// </summary>
-        private static void EnsureEventSystem()
+        private static void EnsureEventSystem(bool createIfMissing)
         {
             if (EventSystem.current != null)
             {
@@ -241,6 +311,12 @@ namespace CandyUI
             if (systems.Length > 0)
             {
                 EnsureInputModule(systems[0].gameObject);
+                return;
+            }
+
+            if (!createIfMissing)
+            {
+                Debug.Log("[CandyUI] 场景中没有 EventSystem，且配置要求不自动创建，UI 点击/导航将不可用。");
                 return;
             }
 
