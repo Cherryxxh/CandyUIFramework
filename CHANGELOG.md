@@ -2,6 +2,11 @@
 
 本包遵循语义化版本，版本号与 `package.json` 保持一致。
 
+## [1.2.0] - 2026-11-16
+
+- **改为可选依赖**：`package.json` 移除 `com.tuyoogame.yooasset`，装本包不再强制安装 YooAsset（宿主只需 ugui / TMP / InputSystem）。
+- YooAsset 适配器移到 `Extras~/YooAsset/`：`~` 结尾的目录 Unity 不导入、不编译，需要时手动拷到工程 `Assets/` 下；文件与 GUID 保持不变，程序集名仍是 `CandyUIFramework.YooAsset`。
+- README 安装章节改为「可选：接入 YooAsset」，新增手动拷贝步骤与两种接入方式。
 ## [1.1.0] - 2026-11-16
 
 - 新增 `Extras/YooAsset`：把 YooAsset 3.0.7 适配器（`YooAssetLoader` / `YooAssetHandle`，程序集 `CandyUIFramework.YooAsset`）并入本包，安装后即可直接用 YooAsset 加载界面。

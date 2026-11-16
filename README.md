@@ -3,8 +3,8 @@
 面向 Unity（uGUI）的特性驱动 UI 框架：用 `[UIPanel]` 声明界面、异步打开/关闭、可插拔资源加载、窗口栈与弹窗队列，带编辑器期校验与 EditMode 自动化测试。
 
 - UPM 包名：`com.cherryxxh.candyui`，C# 命名空间：`CandyUI`
-- 包版本：1.0.0（见 [CHANGELOG.md](CHANGELOG.md)）
-- 本包 = 框架代码 + YooAsset 适配器（`Extras/YooAsset`）；Demo 场景、Demo 脚本、DOTween 转场与 PlayMode 测试在示例工程 **MakeUiFrame** 中
+- 包版本：1.2.0（见 [CHANGELOG.md](CHANGELOG.md)）
+- 本包 = 框架代码（`Runtime` + `Editor`）+ YooAsset 适配器**源码**（`Extras~/YooAsset`，默认不编译；用到时拷进工程并自行安装 YooAsset）；Demo 场景、Demo 脚本、DOTween 转场与 PlayMode 测试在示例工程 **MakeUiFrame** 中
 - 交接文档：正文在示例工程仓库 [`MakeUiFrame/docs/CandyUIFramework_交接文档.md`](https://github.com/Cherryxxh/MakeUiFrame/blob/main/docs/CandyUIFramework_%E4%BA%A4%E6%8E%A5%E6%96%87%E6%A1%A3.md)（架构、核心机制、完整 API、FAQ、已知限制）；本包 `Documents/` 只留镜像说明
 
 ## 特性
@@ -33,19 +33,24 @@
   - `com.unity.textmeshpro` 3.0.7
   - `com.unity.inputsystem` 1.7.0（Runtime 程序集直接引用 `Unity.InputSystem`，必装）
 - 只支持**新版 Input System**：Player Settings → Active Input Handling 选 `Input System Package (New)`；`UIRoot` 会自动创建 `InputSystemUIInputModule`
-- YooAsset 3.0.7（本包依赖，装包前先按 §安装 配置 OpenUPM 源；适配器源码在 `Extras/YooAsset`）
+- YooAsset 3.0.7（**可选**：只在你要用 YooAsset 加载器时安装，本包默认不依赖它）
 - 不依赖 DOTween：内置转场为纯协程实现
 
 ## 安装
 
 本仓库根目录就是 UPM 包（`package.json` 在根上），按需选一种方式：
 
-### 前置：配置 OpenUPM 源（必须）
+### 可选：接入 YooAsset（不装也能用）
 
-本包依赖 YooAsset 3.0.7（适配器 `Extras/YooAsset` 直接引用其程序集），而 YooAsset 发布在 OpenUPM 上，宿主工程必须先加 scoped registry，否则解析依赖会失败：
+本包**默认不依赖 YooAsset**：用 `ResourcesAssetLoader` 或自研 loader 时不需要任何额外配置。要接 YooAsset 时做两步：
+
+**1) 在宿主工程安装 `com.tuyoogame.yooasset` 3.0.7**（它发布在 OpenUPM，需先加 scoped registry）：
 
 ```json
 {
+  "dependencies": {
+    "com.tuyoogame.yooasset": "3.0.7"
+  },
   "scopedRegistries": [
     {
       "name": "package.openupm.com",
@@ -56,6 +61,14 @@
 }
 ```
 
+**2) 把本包的 `Extras~/YooAsset/` 拷到宿主工程 `Assets/` 下**（例如 `Assets/CandyUI.YooAsset/`），连 `.meta` 一起拷以保留 GUID。`~` 结尾的目录 Unity 不导入、不编译，所以这一步必须手动做。
+
+拷进去后会自动编译出程序集 `CandyUIFramework.YooAsset`，用法：
+
+```csharp
+UIManager.InitializeAssetLoader(new YooAssetLoader(package));
+```
+
 ### 方式一：Git URL（发布后推荐）
 
 在宿主工程的 `Packages/manifest.json` 里加：
@@ -63,7 +76,7 @@
 ```json
 {
   "dependencies": {
-    "com.cherryxxh.candyui": "https://github.com/Cherryxxh/CandyUIFramework.git#v1.1.0"
+    "com.cherryxxh.candyui": "https://github.com/Cherryxxh/CandyUIFramework.git#v1.2.0"
   }
 }
 ```
@@ -232,7 +245,7 @@ com.cherryxxh.candyui/
 │   ├── Transition/              # IPanelTransition + FadeScaleTransition
 │   └── Infrastructure/          # UIRoot、UIRootConfig、日志
 ├── Editor/                      # CandyUIFramework.Editor（Editor-only）：地址生成器、引用校验
-├── Extras/YooAsset/             # CandyUIFramework.YooAsset（可选程序集）：YooAssetLoader / YooAssetHandle
+├── Extras~/YooAsset/            # 可选适配器源码（不编译）：YooAssetLoader / YooAssetHandle
 ├── Tests/                       # CandyUIFramework.Tests（EditMode，nunit）
 └── Documents/                   # 交接文档镜像说明（正文在示例工程）
 ```
