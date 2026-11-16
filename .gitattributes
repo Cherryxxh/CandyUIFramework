@@ -3,3 +3,6 @@
 *.asmdef text unity-json
 *.meta text unity-yaml
 *.md text
+
+# 生成文件固定 LF，避免 Windows 检出后每次显示已修改
+*.g.cs text eol=lf linguist-generated
