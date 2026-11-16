@@ -3,6 +3,8 @@
     "rootNamespace": "CandyUI.PlayModeTests",
     "references": [
         "CandyUIFramework.Runtime",
+        "CandyUIFramework.YooAsset",
+        "YooAsset",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner",
         "UnityEngine.UI",
