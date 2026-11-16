@@ -50,11 +50,13 @@ namespace CandyUI
 
         /// <summary>
         /// 打开一个窗口：新窗口显示，旧窗口隐藏并入栈。
-        /// 已经打开过的窗口不重新加载 Prefab，只移动到栈顶并重新 Show。
+        /// 已经打开过的窗口不重新加载 Prefab，只移动到栈顶并重新 Show；
+        /// instanceName 区分同类型多实例（null = 默认实例，与旧行为一致）。
         /// </summary>
         internal async Task<T> OpenWindowAsync<T>(
             UIPanelData data = null,
-            CancellationToken cancellationToken = default) where T : UIPanel
+            CancellationToken cancellationToken = default,
+            string instanceName = null) where T : UIPanel
         {
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -62,9 +64,10 @@ namespace CandyUI
             await WaitPendingCloseAsync();
 
             Type type = typeof(T);
+            PanelKey key = new PanelKey(type, instanceName);
 
             // 已经打开过：把实例重新显示，并移到栈顶（不重新加载 Prefab）。
-            if (_panels.TryGetOpenedOfType(type, out UIPanelInfo opened)
+            if (_panels.TryGetOpened(key, out UIPanelInfo opened)
                 && opened.Panel != null
                 && opened.Panel.State != UIPanelState.Closed)
             {
@@ -73,7 +76,7 @@ namespace CandyUI
                 if (_stack.Peek() == already)
                 {
                     already.InternalShow(data);
-                    CandyUILog.Info($"窗口已在栈顶：{type.Name}（栈深 {_stack.Count}）");
+                    CandyUILog.Info($"窗口已在栈顶：{key}（栈深 {_stack.Count}）");
                     return (T)already;
                 }
 
@@ -88,11 +91,11 @@ namespace CandyUI
                 _stack.Remove(already);
                 _stack.Push(already);
                 already.InternalShow(data);
-                CandyUILog.Info($"窗口重新置顶：{type.Name}（{DescribeStack()}）");
+                CandyUILog.Info($"窗口重新置顶：{key}（{DescribeStack()}）");
                 return (T)already;
             }
 
-            UIPanel panel = await _panels.OpenPanelAsync<T>(data, UILayer.Window, cancellationToken);
+            UIPanel panel = await _panels.OpenPanelAsync<T>(data, UILayer.Window, cancellationToken, instanceName);
 
             UIPanel previous = _stack.Peek();
             if (previous != null && previous != panel)
@@ -103,7 +106,7 @@ namespace CandyUI
             }
 
             _stack.Push(panel);
-            CandyUILog.Info($"窗口入栈：{type.Name}（{DescribeStack()}），上层已隐藏");
+            CandyUILog.Info($"窗口入栈：{key}（{DescribeStack()}），上层已隐藏");
             return (T)panel;
         }
 

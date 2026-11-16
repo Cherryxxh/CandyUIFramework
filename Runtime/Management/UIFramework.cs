@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -197,6 +198,29 @@ namespace CandyUI
             return (T)await _panels.OpenPanelAsync<T>(data, null, cancellationToken);
         }
 
+        /// <summary>
+        /// 打开（或复用）平铺层的命名实例：同一类型的不同实例名可以同时打开，相同实例名复用同一个实例。
+        /// </summary>
+        public async Task<T> OpenPlainPanelAsync<T>(
+            string instanceName,
+            UIPanelData data = null,
+            CancellationToken cancellationToken = default)
+            where T : UIPanel
+        {
+            ThrowIfDisposed();
+
+            UIPanelAttribute attribute = _panels.GetAttribute(typeof(T));
+            if (attribute != null
+                && (attribute.Layer == UILayer.Window || attribute.Layer == UILayer.Popup))
+            {
+                throw new InvalidOperationException(
+                    $"[CandyUI] {typeof(T).Name} 声明在 {attribute.Layer} 层，" +
+                    "打开窗口请用 OpenWindowAsync，打开弹窗请用 OpenPopupAsync。");
+            }
+
+            return (T)await _panels.OpenPanelAsync<T>(data, null, cancellationToken, instanceName);
+        }
+
         /// <summary>打开一个窗口（Window 层）：当前窗口隐藏入栈，不销毁。</summary>
         public async Task<T> OpenWindowAsync<T>(
             UIPanelData data = null,
@@ -205,6 +229,17 @@ namespace CandyUI
             ThrowIfDisposed();
 
             return (T)await _windows.OpenWindowAsync<T>(data, cancellationToken);
+        }
+
+        /// <summary>打开一个窗口命名实例：同一类型的不同实例名可以同时存在于窗口栈。</summary>
+        public async Task<T> OpenWindowAsync<T>(
+            string instanceName,
+            UIPanelData data = null,
+            CancellationToken cancellationToken = default) where T : UIPanel
+        {
+            ThrowIfDisposed();
+
+            return (T)await _windows.OpenWindowAsync<T>(data, cancellationToken, instanceName);
         }
 
         /// <summary>打开一个弹窗（Popup 层）；已有弹窗时排队并返回 null。</summary>
@@ -269,17 +304,18 @@ namespace CandyUI
             return _panels.WaitCloseAsync(panel);
         }
 
-        /// <summary>关闭指定类型的面板；没打开时什么都不做。</summary>
+        /// <summary>
+        /// 关闭指定类型的全部实例（默认实例与所有命名实例，窗口/弹窗走各自的出栈/队列路由）；没打开时什么都不做。
+        /// </summary>
         public void CloseOfType<T>(PanelCloseReason reason = PanelCloseReason.UserClose)
             where T : UIPanel
         {
             ThrowIfDisposed();
 
-            if (_panels.TryGetOpenedOfType(typeof(T), out UIPanelInfo info)
-                && info.Panel != null)
-            {
-                Close(info.Panel, reason);
-            }
+            // 先快照再逐个关闭：关闭会修改打开表，窗口/弹窗还需要各自的栈与队列收尾。
+            IReadOnlyList<UIPanel> panels = _panels.GetOpenedPanelsOfType(typeof(T));
+            for (int i = 0; i < panels.Count; i++)
+                Close(panels[i], reason);
         }
 
         /// <summary>关闭当前窗口并恢复上一个窗口（如果有）。</summary>
@@ -369,12 +405,20 @@ namespace CandyUI
             return _panels.TryHide(panel);
         }
 
-        /// <summary>隐藏指定类型的面板；没打开或隐藏失败时返回 false。</summary>
+        /// <summary>隐藏指定类型的默认实例；没打开或隐藏失败时返回 false。</summary>
         public bool TryHidePanel<T>() where T : UIPanel
         {
             ThrowIfDisposed();
 
             return TryHidePanel(_panels.GetOpenedOfPanel<T>());
+        }
+
+        /// <summary>隐藏指定类型的命名实例；instanceName 为 null 表示默认实例。</summary>
+        public bool TryHidePanel<T>(string instanceName) where T : UIPanel
+        {
+            ThrowIfDisposed();
+
+            return TryHidePanel(_panels.GetOpenedOfPanel<T>(instanceName));
         }
 
         /// <summary>显示已打开但被隐藏的面板，可携带新数据；不是栈顶窗口时返回 false。</summary>
@@ -396,12 +440,20 @@ namespace CandyUI
             return _panels.TryShow(panel, data);
         }
 
-        /// <summary>显示指定类型的面板；没打开时返回 false。</summary>
+        /// <summary>显示指定类型的默认实例；没打开时返回 false。</summary>
         public bool TryShowPanel<T>(UIPanelData data = null) where T : UIPanel
         {
             ThrowIfDisposed();
 
             return TryShowPanel(_panels.GetOpenedOfPanel<T>(), data);
+        }
+
+        /// <summary>显示指定类型的命名实例，可携带新数据；instanceName 为 null 表示默认实例。</summary>
+        public bool TryShowPanel<T>(string instanceName, UIPanelData data = null) where T : UIPanel
+        {
+            ThrowIfDisposed();
+
+            return TryShowPanel(_panels.GetOpenedOfPanel<T>(instanceName), data);
         }
 
         #endregion
@@ -414,22 +466,46 @@ namespace CandyUI
             get { return _popups.HasActive || _windows.CanGoBack; }
         }
 
-        /// <summary>获取已打开的面板实例，没有则返回 null。</summary>
+        /// <summary>获取已打开面板的默认实例，没有则返回 null。</summary>
         public T GetOpenedPanel<T>() where T : UIPanel
         {
             return _panels.GetOpenedOfPanel<T>();
         }
 
-        /// <summary>面板是否处于打开状态（不包含已关闭）。</summary>
+        /// <summary>获取已打开面板的命名实例；instanceName 为 null 表示默认实例，没有则返回 null。</summary>
+        public T GetOpenedPanel<T>(string instanceName) where T : UIPanel
+        {
+            return _panels.GetOpenedOfPanel<T>(instanceName);
+        }
+
+        /// <summary>按打开顺序返回指定类型的全部已打开实例（默认实例与所有命名实例）。</summary>
+        public IReadOnlyList<UIPanel> GetOpenedPanels<T>() where T : UIPanel
+        {
+            return _panels.GetOpenedPanelsOfType(typeof(T));
+        }
+
+        /// <summary>默认实例是否处于打开状态（不包含已关闭）。</summary>
         public bool HasOpenedPanel<T>() where T : UIPanel
         {
             return _panels.IsOpen<T>();
         }
 
-        /// <summary>面板是否可见（打开且没有被隐藏）。</summary>
+        /// <summary>命名实例是否处于打开状态；instanceName 为 null 表示默认实例。</summary>
+        public bool HasOpenedPanel<T>(string instanceName) where T : UIPanel
+        {
+            return _panels.IsOpen<T>(instanceName);
+        }
+
+        /// <summary>默认实例是否可见（打开且没有被隐藏）。</summary>
         public bool IsPanelVisible<T>() where T : UIPanel
         {
             return _panels.IsVisible<T>();
+        }
+
+        /// <summary>命名实例是否可见；instanceName 为 null 表示默认实例。</summary>
+        public bool IsPanelVisible<T>(string instanceName) where T : UIPanel
+        {
+            return _panels.IsVisible<T>(instanceName);
         }
 
         #endregion

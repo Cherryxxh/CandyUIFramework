@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -137,6 +138,18 @@ namespace CandyUI
         }
 
         /// <summary>
+        /// 打开（或复用）普通面板的命名实例：同类型不同实例名可以同时打开，相同实例名复用同一实例。
+        /// </summary>
+        public static async Task<T> OpenPlainPanelAsync<T>(
+            string instanceName,
+            UIPanelData data = null,
+            CancellationToken cancellationToken = default)
+            where T : UIPanel
+        {
+            return await DefaultFramework.OpenPlainPanelAsync<T>(instanceName, data, cancellationToken);
+        }
+
+        /// <summary>
         /// 打开一个"窗口"（UILayer.Window）。当前窗口会被隐藏并入栈，不会销毁。
         /// 玩家点返回时调用 NavigateBack()，就能回到上一个窗口，数据/滚动位置都还在。
         ///
@@ -152,6 +165,15 @@ namespace CandyUI
             CancellationToken cancellationToken = default) where T : UIPanel
         {
             return await DefaultFramework.OpenWindowAsync<T>(data, cancellationToken);
+        }
+
+        /// <summary>打开窗口的命名实例：同类型不同实例名可以同时存在于窗口栈。</summary>
+        public static async Task<T> OpenWindowAsync<T>(
+            string instanceName,
+            UIPanelData data = null,
+            CancellationToken cancellationToken = default) where T : UIPanel
+        {
+            return await DefaultFramework.OpenWindowAsync<T>(instanceName, data, cancellationToken);
         }
 
         /// <summary>
@@ -208,7 +230,7 @@ namespace CandyUI
             return DefaultFramework.WaitForCloseAsync(panel);
         }
 
-        /// <summary>关闭指定类型的面板（没打开时什么都不做）。</summary>
+        /// <summary>关闭指定类型的全部实例（默认实例与所有命名实例）；没打开时什么都不做。</summary>
         public static void CloseOfType<T>(PanelCloseReason reason = PanelCloseReason.UserClose)
             where T : UIPanel
         {
@@ -280,10 +302,16 @@ namespace CandyUI
             return DefaultFramework.TryHidePanel(panel);
         }
 
-        /// <summary>隐藏指定类型的面板；没打开或隐藏失败时返回 false。</summary>
+        /// <summary>隐藏指定类型的默认实例；没打开或隐藏失败时返回 false。</summary>
         public static bool TryHidePanel<T>() where T : UIPanel
         {
             return DefaultFramework.TryHidePanel<T>();
+        }
+
+        /// <summary>隐藏指定类型的命名实例；instanceName 为 null 表示默认实例。</summary>
+        public static bool TryHidePanel<T>(string instanceName) where T : UIPanel
+        {
+            return DefaultFramework.TryHidePanel<T>(instanceName);
         }
 
         /// <summary>
@@ -295,10 +323,16 @@ namespace CandyUI
             return DefaultFramework.TryShowPanel(panel, data);
         }
 
-        /// <summary>显示指定类型的面板；没打开时返回 false。</summary>
+        /// <summary>显示指定类型的默认实例；没打开时返回 false。</summary>
         public static bool TryShowPanel<T>(UIPanelData data = null) where T : UIPanel
         {
             return DefaultFramework.TryShowPanel<T>(data);
+        }
+
+        /// <summary>显示指定类型的命名实例，可携带新数据；instanceName 为 null 表示默认实例。</summary>
+        public static bool TryShowPanel<T>(string instanceName, UIPanelData data = null) where T : UIPanel
+        {
+            return DefaultFramework.TryShowPanel<T>(instanceName, data);
         }
 
         #endregion
@@ -315,22 +349,46 @@ namespace CandyUI
             get { return DefaultFramework.CanNavigateBack; }
         }
 
-        /// <summary>获取已打开的面板实例，没有则返回 null。</summary>
+        /// <summary>获取已打开面板的默认实例，没有则返回 null。</summary>
         public static T GetOpenedPanel<T>() where T : UIPanel
         {
             return DefaultFramework.GetOpenedPanel<T>();
         }
 
-        /// <summary>面板是否处于打开状态（不包含已关闭）。</summary>
+        /// <summary>获取已打开面板的命名实例；instanceName 为 null 表示默认实例，没有则返回 null。</summary>
+        public static T GetOpenedPanel<T>(string instanceName) where T : UIPanel
+        {
+            return DefaultFramework.GetOpenedPanel<T>(instanceName);
+        }
+
+        /// <summary>按打开顺序返回指定类型的全部已打开实例（默认实例与所有命名实例）。</summary>
+        public static IReadOnlyList<UIPanel> GetOpenedPanels<T>() where T : UIPanel
+        {
+            return DefaultFramework.GetOpenedPanels<T>();
+        }
+
+        /// <summary>默认实例是否处于打开状态（不包含已关闭）。</summary>
         public static bool HasOpenedPanel<T>() where T : UIPanel
         {
             return DefaultFramework.HasOpenedPanel<T>();
         }
 
-        /// <summary>面板是否可见（打开且没有被隐藏）。</summary>
+        /// <summary>命名实例是否处于打开状态；instanceName 为 null 表示默认实例。</summary>
+        public static bool HasOpenedPanel<T>(string instanceName) where T : UIPanel
+        {
+            return DefaultFramework.HasOpenedPanel<T>(instanceName);
+        }
+
+        /// <summary>默认实例是否可见（打开且没有被隐藏）。</summary>
         public static bool IsPanelVisible<T>() where T : UIPanel
         {
             return DefaultFramework.IsPanelVisible<T>();
+        }
+
+        /// <summary>命名实例是否可见；instanceName 为 null 表示默认实例。</summary>
+        public static bool IsPanelVisible<T>(string instanceName) where T : UIPanel
+        {
+            return DefaultFramework.IsPanelVisible<T>(instanceName);
         }
 
         #endregion

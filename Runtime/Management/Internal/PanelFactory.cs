@@ -51,6 +51,7 @@ namespace CandyUI
         /// </summary>
         internal async Task<UIPanelInfo> CreateAsync(
             Type type,
+            PanelKey key,
             UILayer? layerOverride,
             CancellationToken cancellationToken)
         {
@@ -116,7 +117,8 @@ namespace CandyUI
 
             // worldPositionStays: false —— 保持 Prefab 里的局部布局，否则会按世界坐标重新计算出现偏移。
             GameObject instance = Object.Instantiate(prefab, layerRoot, false);
-            instance.name = type.Name;
+            // 命名实例带上实例名后缀，调试时能直接区分同类型多实例；默认实例保持旧的节点名。
+            instance.name = key.InstanceName == null ? type.Name : $"{type.Name}_{key.InstanceName}";
 
             // 面板默认铺满所在层；需要固定尺寸的面板在 OnCreate 里自己改 RectTransform。
             RectTransform rect = instance.GetComponent<RectTransform>();
@@ -134,6 +136,7 @@ namespace CandyUI
             UIPanelInfo info = new UIPanelInfo
             {
                 PanelType = type,
+                Key = key,
                 Address = attribute.PrefabAddress,
                 Layer = layer,
                 Panel = panel,
@@ -144,6 +147,8 @@ namespace CandyUI
 
             panel.Layer = layer;
             panel.Address = attribute.PrefabAddress;
+            // 实例名要在 OnCreate/OnShow 之前写入：面板自己（和重入关闭路由）要能读到它。
+            panel.InstanceName = key.InstanceName;
             // 记录创建它的 UI 上下文：CloseSelf 要路由回这一套（未绑定时留 null，退回默认门面）。
             panel.Framework = _owner.Framework;
 

@@ -16,8 +16,8 @@ namespace CandyUI
     /// </summary>
     internal sealed class PanelOpenOperation
     {
-        /// <summary>面板类型（字典的 key，收尾回调按它定位要关闭的面板）。</summary>
-        internal readonly Type PanelType;
+        /// <summary>实例键（类型 + 实例名，字典的 key），收尾回调按它定位要关闭的面板实例。</summary>
+        internal readonly PanelKey Key;
 
         /// <summary>共享创建 Task（用 CancellationToken.None 创建，不绑定任何调用方）。为空表示已结束/未登记。</summary>
         internal Task<UIPanel> Task;
@@ -31,12 +31,18 @@ namespace CandyUI
         /// </summary>
         internal bool IsAbandoned;
 
-        /// <summary>
-        /// 用面板类型构造一次打开的状态对象；类型同时作为字典 key 和收尾定位依据。
-        /// </summary>
-        internal PanelOpenOperation(Type panelType)
+        /// <summary>面板类型（Key.PanelType 的快捷访问，日志与关闭回调仍按类型描述）。</summary>
+        internal Type PanelType
         {
-            PanelType = panelType;
+            get { return Key.PanelType; }
+        }
+
+        /// <summary>
+        /// 用实例键构造一次打开的状态对象；键同时作为字典 key 和收尾定位依据。
+        /// </summary>
+        internal PanelOpenOperation(PanelKey key)
+        {
+            Key = key;
         }
 
         /// <summary>

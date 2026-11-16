@@ -8,7 +8,7 @@ namespace CandyUI
     /// 面板打开的在途状态（框架内部）：去重、等待者计数、最后一个等待者取消后的废弃判定与收尾调度。
     ///
     /// 不变量：
-    /// 1. 同一类型同一时刻最多一个共享创建 Task；等待方等的是它，取消只放弃自己的等待；
+    /// 1. 同一实例键（类型 + 实例名）同一时刻最多一个共享创建 Task；等待方等的是它，取消只放弃自己的等待；
     /// 2. 只有"最后一个等待者取消"才可能把一次打开标记为废弃；
     /// 3. 收尾判定只看两点：废弃标记仍在 && 等待者计数为 0。谁取消谁负责调度收尾，上层不补调用；
     /// 4. 共享 Task 从不因某个调用方取消而中断，所以收尾必须等它结束后再做。
@@ -18,20 +18,20 @@ namespace CandyUI
     /// </summary>
     internal sealed class PanelOpener
     {
-        /// <summary>按面板类型索引的在途打开；条目可能只剩等待者或废弃标记。</summary>
-        private readonly Dictionary<Type, PanelOpenOperation> _dicOperations =
-            new Dictionary<Type, PanelOpenOperation>();
+        /// <summary>按实例键索引的在途打开；条目可能只剩等待者或废弃标记。</summary>
+        private readonly Dictionary<PanelKey, PanelOpenOperation> _dicOperations =
+            new Dictionary<PanelKey, PanelOpenOperation>();
 
-        /// <summary>废弃标记被消费后调用：由 PanelService 强制关闭该类型的幽灵面板。</summary>
-        private readonly Action<Type> _finalizeAbandoned;
+        /// <summary>废弃标记被消费后调用：由 PanelService 强制关闭该实例键对应的幽灵面板。</summary>
+        private readonly Action<PanelKey> _finalizeAbandoned;
 
-        /// <summary>登记了共享创建 Task 的类型数量（调试快照的"加载中"）。</summary>
+        /// <summary>登记了共享创建 Task 的实例数（调试快照的"加载中"）。</summary>
         private int _loadingCount;
 
         /// <summary>
         /// 接收废弃收尾回调：标记被消费后由 PanelService 强制关闭没人能拿到的幽灵面板。
         /// </summary>
-        internal PanelOpener(Action<Type> finalizeAbandoned)
+        internal PanelOpener(Action<PanelKey> finalizeAbandoned)
         {
             _finalizeAbandoned = finalizeAbandoned;
         }
@@ -58,23 +58,23 @@ namespace CandyUI
             _loadingCount = 0;
         }
 
-        /// <summary>取某个类型的在途打开；没有正在创建的 Task（创建已结束）时返回 false。</summary>
-        internal bool TryGetOperation(Type type, out PanelOpenOperation operation)
+        /// <summary>取某个实例键的在途打开；没有正在创建的 Task（创建已结束）时返回 false。</summary>
+        internal bool TryGetOperation(PanelKey key, out PanelOpenOperation operation)
         {
-            if (_dicOperations.TryGetValue(type, out operation) && operation.Task != null)
+            if (_dicOperations.TryGetValue(key, out operation) && operation.Task != null)
                 return true;
 
             operation = null;
             return false;
         }
 
-        /// <summary>登记"开始创建"；同类型残留的等待者/废弃标记由新对象继续持有。</summary>
-        internal PanelOpenOperation BeginOperation(Type type, Task<UIPanel> task)
+        /// <summary>登记"开始创建"；同实例键残留的等待者/废弃标记由新对象继续持有。</summary>
+        internal PanelOpenOperation BeginOperation(PanelKey key, Task<UIPanel> task)
         {
-            if (!_dicOperations.TryGetValue(type, out PanelOpenOperation operation))
+            if (!_dicOperations.TryGetValue(key, out PanelOpenOperation operation))
             {
-                operation = new PanelOpenOperation(type);
-                _dicOperations[type] = operation;
+                operation = new PanelOpenOperation(key);
+                _dicOperations[key] = operation;
             }
 
             if (operation.Task == null)
@@ -88,7 +88,7 @@ namespace CandyUI
         internal void EndOperation(PanelOpenOperation operation, Task<UIPanel> task)
         {
             if (!ReferenceEquals(operation.Task, task))
-                return; // 已被 Reset 清空，或类型又被新一次创建接手：不是本次的登记。
+                return; // 已被 Reset 清空，或实例键又被新一次创建接手：不是本次的登记。
 
             operation.Task = null;
             if (_loadingCount > 0)
@@ -155,7 +155,7 @@ namespace CandyUI
             {
                 // 取消与创建完成恰好同时发生：共享 Task 已结束、登记已清掉，
                 // 但面板可能已经进了打开表却没有人拿到它。这里同步收尾。
-                FinalizeAbandoned(operation.PanelType);
+                FinalizeAbandoned(operation.Key);
                 return;
             }
 
@@ -163,16 +163,16 @@ namespace CandyUI
         }
 
         /// <summary>废弃标记是否仍在（期间没有新调用方接手）。</summary>
-        internal bool IsAbandoned(Type type)
+        internal bool IsAbandoned(PanelKey key)
         {
-            return _dicOperations.TryGetValue(type, out PanelOpenOperation operation)
+            return _dicOperations.TryGetValue(key, out PanelOpenOperation operation)
                    && operation.IsAbandoned;
         }
 
         /// <summary>清掉废弃标记：任何会拿到面板的路径都必须先调用，避免后台收尾误伤。</summary>
-        internal void ClearAbandoned(Type type)
+        internal void ClearAbandoned(PanelKey key)
         {
-            if (!_dicOperations.TryGetValue(type, out PanelOpenOperation operation))
+            if (!_dicOperations.TryGetValue(key, out PanelOpenOperation operation))
                 return;
 
             operation.IsAbandoned = false;
@@ -193,11 +193,11 @@ namespace CandyUI
             catch
             {
                 // 创建本身失败：创建路径已按失败清理，这里只需要清掉废弃标记。
-                ClearAbandoned(operation.PanelType);
+                ClearAbandoned(operation.Key);
                 return;
             }
 
-            FinalizeAbandoned(operation.PanelType);
+            FinalizeAbandoned(operation.Key);
         }
 
         /// <summary>
@@ -205,9 +205,9 @@ namespace CandyUI
         /// 标记代表最后一个等待者已取消；等待者计数非 0 说明期间又有调用方接手，面板有人要，绝不能关。
         /// 返回 true 表示标记已被消费，此时通知 PanelService 强制关闭（不进 KeepInstance 缓存）。
         /// </summary>
-        private void FinalizeAbandoned(Type type)
+        private void FinalizeAbandoned(PanelKey key)
         {
-            if (!_dicOperations.TryGetValue(type, out PanelOpenOperation operation)
+            if (!_dicOperations.TryGetValue(key, out PanelOpenOperation operation)
                 || !operation.IsAbandoned)
             {
                 return;
@@ -218,7 +218,7 @@ namespace CandyUI
 
             operation.IsAbandoned = false;
             RemoveIfEmpty(operation);
-            _finalizeAbandoned(type);
+            _finalizeAbandoned(key);
         }
 
         /// <summary>
@@ -226,7 +226,7 @@ namespace CandyUI
         /// </summary>
         private bool IsTracked(PanelOpenOperation operation)
         {
-            return _dicOperations.TryGetValue(operation.PanelType, out PanelOpenOperation tracked)
+            return _dicOperations.TryGetValue(operation.Key, out PanelOpenOperation tracked)
                    && ReferenceEquals(tracked, operation);
         }
 
@@ -237,7 +237,7 @@ namespace CandyUI
                 return;
 
             if (IsTracked(operation))
-                _dicOperations.Remove(operation.PanelType);
+                _dicOperations.Remove(operation.Key);
         }
     }
 }

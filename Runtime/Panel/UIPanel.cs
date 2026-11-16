@@ -50,6 +50,12 @@ namespace CandyUI
         public string Address { get; internal set; }
 
         /// <summary>
+        /// 实例名（由框架在创建时写入）：null 表示默认实例，非 null 用于区分同类型多实例。
+        /// 同一个类型 + 同一个实例名在打开表里只会存在一个实例。
+        /// </summary>
+        public string InstanceName { get; internal set; }
+
+        /// <summary>
         /// 这个面板的 Presenter（可能为 null：简单界面可以不用 Presenter）。
         /// 由框架在 OnCreate 之后通过 CreatePresenter 创建并绑定。
         /// </summary>
