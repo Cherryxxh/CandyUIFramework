@@ -226,11 +226,12 @@ namespace CandyUI.Tests
         }
 
         /// <summary>
-        /// 反射读取实例的非公开字段，用于检查 PanelService / AssetCache 等 internal 状态。
+        /// 反射读取实例字段（含 public 与 internal），用于检查 UIPanelInfo / PanelService / AssetCache 等状态。
         /// </summary>
         protected static object GetInstanceField(object target, string fieldName)
         {
-            FieldInfo field = target.GetType().GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Instance);
+            FieldInfo field = target.GetType().GetField(
+                fieldName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             Assert.NotNull(field, $"找不到实例字段 {target.GetType().Name}.{fieldName}");
             return field.GetValue(target);
         }
