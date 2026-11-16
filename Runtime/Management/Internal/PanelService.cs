@@ -473,10 +473,21 @@ namespace CandyUI
         }
 
         /// <summary>
-        /// 拼一行面板状态摘要：打开数、在途加载数、实例缓存数与资源缓存数。
+        /// 拼一行面板状态摘要：打开数、在途加载数、实例缓存数、资源缓存数与独立 Canvas 面板数。
         /// </summary>
         internal string GetDebugSnapshot()
-            => $"面板: 打开 {_dicOpenedPanels.Count} | 加载中 {_opener.LoadingCount} | 缓存实例 {_dicPanelCache.Count} | 资源缓存 {_cache?.Count ?? 0}（加载中 {_cache?.LoadingCount ?? 0}）";
+        {
+            int ownCanvasCount = 0;
+            foreach (UIPanelInfo info in _dicOpenedPanels.Values)
+            {
+                if (info.HasOwnCanvas)
+                    ownCanvasCount++;
+            }
+
+            return $"面板: 打开 {_dicOpenedPanels.Count} | 加载中 {_opener.LoadingCount} | " +
+                   $"缓存实例 {_dicPanelCache.Count} | 资源缓存 {_cache?.Count ?? 0}（加载中 {_cache?.LoadingCount ?? 0}） | " +
+                   $"独立Canvas {ownCanvasCount}";
+        }
         #endregion
     }
 }

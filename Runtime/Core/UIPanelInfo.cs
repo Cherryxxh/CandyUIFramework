@@ -18,5 +18,11 @@ namespace CandyUI
         public UIPanel Panel;
         public GameObject GameObject;
         public IAssetHandle Handle;
+
+        /// <summary>
+        /// Prefab 根是否自带 Canvas（检测时只查根节点，不代加、不改排序/缩放）。
+        /// 仅用于调试快照区分独立 Canvas 面板，不参与打开/关闭流程。
+        /// </summary>
+        internal bool HasOwnCanvas;
     }
 }

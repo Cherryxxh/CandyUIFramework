@@ -18,6 +18,12 @@ namespace CandyUI.Tests
     /// </summary>
     public sealed class FakeAssetLoader : IAssetLoader
     {
+        /// <summary>
+        /// 造 Prefab 时要在根上额外挂 Canvas 的面板类型集合，用于验证“面板自带 Canvas”路径；
+        /// 由 OwnCanvasTestPanel 的静态开关同步，ResetSwitches 负责复位，避免跨用例污染。
+        /// </summary>
+        internal static readonly HashSet<Type> OwnCanvasTypes = new HashSet<Type>();
+
         private readonly Dictionary<string, Type> _dicAddressToPanelType = new Dictionary<string, Type>();
         private readonly Dictionary<string, int> _dicLoadCount = new Dictionary<string, int>();
         private readonly List<FakeAssetHandle> _listHandles = new List<FakeAssetHandle>();
@@ -139,10 +145,15 @@ namespace CandyUI.Tests
 
         /// <summary>
         /// 创建带 RectTransform 和面板组件的临时 Prefab，并登记到句柄列表以便统一清理。
+        /// 命中 OwnCanvasTypes 时在根上补一个 Canvas，模拟“面板 Prefab 根自带 Canvas”。
         /// </summary>
         private FakeAssetHandle CreateHandle(string address, Type panelType)
         {
             GameObject prefab = new GameObject("TestPrefab_" + panelType.Name, typeof(RectTransform), panelType);
+            // EditMode 下给根加 Canvas 不需要 EventSystem，也不会走框架的任何 Canvas 创建逻辑。
+            if (OwnCanvasTypes.Contains(panelType))
+                prefab.AddComponent<Canvas>();
+
             FakeAssetHandle handle = new FakeAssetHandle(address, prefab);
             _listHandles.Add(handle);
             return handle;

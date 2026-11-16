@@ -99,6 +99,10 @@ namespace CandyUI
                     $"[CandyUI] Prefab {attribute.PrefabAddress} 上没有挂 {type.Name} 脚本，无法当成面板使用。");
             }
 
+            // 只查 Prefab 根：根自带 Canvas 的面板就是一个独立 Canvas（嵌套在层容器下），
+            // 框架只记录并照常实例化，绝不代加 Canvas，也不改 renderMode/overrideSorting/sortingOrder。
+            bool hasOwnCanvas = prefab.GetComponent<Canvas>() != null;
+
             UIRoot root = UIRoot.EnsureUIRoot();
             RectTransform layerRoot = root.GetLayerRoot(layer);
 
@@ -127,10 +131,17 @@ namespace CandyUI
                 Panel = panel,
                 GameObject = instance,
                 Handle = handle,
+                HasOwnCanvas = hasOwnCanvas,
             };
 
             panel.Layer = layer;
             panel.Address = attribute.PrefabAddress;
+
+            if (hasOwnCanvas)
+            {
+                CandyUILog.Info(
+                    $"面板 {type.Name} 自带 Canvas，作为独立 Canvas 挂在 {layer} 层（框架不修改其排序与缩放）");
+            }
 
             try
             {

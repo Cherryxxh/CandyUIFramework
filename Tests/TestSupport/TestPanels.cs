@@ -100,12 +100,35 @@ namespace CandyUI.Tests
             ReentrantCloseTestPanel.CloseOnNextShow = false;
             ReentrantClosePopupTestPanel.CloseOnNextShow = false;
             KeepInstanceThrowOnShowTestPanel.ThrowOnNextShow = false;
+            OwnCanvasTestPanel.AddCanvasToPrefab = false;
+            OwnCanvasTestPanel.SyncCanvasSwitch();
         }
     }
 
     [UIPanel("CandyUITests/PlainPanel")]
     public sealed class PlainTestPanel : TestPanelBase
     {
+    }
+
+    /// <summary>
+    /// Prefab 根自带 Canvas 的测试面板；静态开关决定 FakeAssetLoader 造 Prefab 时是否真的挂 Canvas。
+    /// </summary>
+    [UIPanel("CandyUITests/OwnCanvasPanel")]
+    public sealed class OwnCanvasTestPanel : TestPanelBase
+    {
+        /// <summary>true 时该类型的测试 Prefab 根带 Canvas；用例可在打开前打开/关闭该开关做对照。</summary>
+        public static bool AddCanvasToPrefab;
+
+        /// <summary>
+        /// 按当前静态开关把本类型登记/移出 FakeAssetLoader 的自带 Canvas 类型集合。
+        /// </summary>
+        public static void SyncCanvasSwitch()
+        {
+            if (AddCanvasToPrefab)
+                FakeAssetLoader.OwnCanvasTypes.Add(typeof(OwnCanvasTestPanel));
+            else
+                FakeAssetLoader.OwnCanvasTypes.Remove(typeof(OwnCanvasTestPanel));
+        }
     }
 
     /// <summary>UserClose 会被 CanClose 拦截的面板；ForceClose 必须能绕过。</summary>
