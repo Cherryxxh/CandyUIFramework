@@ -25,6 +25,11 @@ namespace CandyUI
         /// <summary>清理代号：CloseAll / Reset 时 +1；在途加载完成时发现代号变了就放弃创建，避免旧界面复活。</summary>
         private int _generation;
         /// <summary>
+        /// 缓存代号：清空实例缓存时 +1；KeepInstance 关闭流程写回缓存前发现代号变了就改走销毁路径，
+        /// 避免"清缓存时正在播关闭动画"的实例在动画结束后把已清空的缓存写回来。与 _generation 各管一件事。
+        /// </summary>
+        private int _cacheGeneration;
+        /// <summary>
         /// 装配三个协作者：在途打开状态交给 PanelOpener，实例创建交给 PanelFactory，
         /// 关闭编排交给 PanelCloser；本类只持有注册表与对外入口。
         /// </summary>
@@ -32,7 +37,8 @@ namespace CandyUI
         {
             _opener = new PanelOpener(CloseAbandonedPanel);
             _factory = new PanelFactory(GetAttribute, GetCache, () => _generation, () => DefaultTransition);
-            _closer = new PanelCloser(_dicOpenedPanels, _dicPanelCache, _factory, () => _generation);
+            _closer = new PanelCloser(
+                _dicOpenedPanels, _dicPanelCache, _factory, () => _generation, () => _cacheGeneration);
         }
         #region 初始化
         /// <summary>全局默认转场；面板重写的 CreateTransition 优先，返回 null 时用它（null = 瞬切）。</summary>
@@ -74,7 +80,7 @@ namespace CandyUI
         internal void Reset()
         {
             _generation++; // 让在途加载在完成时放弃创建。
-            ClearCache();
+            ClearCache(); // 内部会递增缓存代号，让正在播关闭动画的 KeepInstance 实例也改走销毁路径。
             _dicOpenedPanels.Clear();
             _opener.Reset();
             _dicAttributes.Clear();
@@ -253,6 +259,10 @@ namespace CandyUI
             if (panel == null)
                 return false;
 
+            // 已经在关闭中：关闭已受理，直接返回 true，避免重复发起关闭把退场动画播两遍。
+            if (panel.State == UIPanelState.Closing)
+                return true;
+
             Type type = panel.GetType();
             if (_dicOpenedPanels.TryGetValue(type, out UIPanelInfo info) && info.Panel == panel)
                 return _closer.TryClose(info, reason);
@@ -276,6 +286,13 @@ namespace CandyUI
         {
             if (panel == null)
                 return false;
+
+            // 正在播退场：不能再"受理"一次，等本次关闭完成即可，调用方依然能 await 到关闭结束。
+            if (panel.State == UIPanelState.Closing)
+            {
+                await WaitCloseAsync(panel);
+                return true;
+            }
 
             Type type = panel.GetType();
             if (_dicOpenedPanels.TryGetValue(type, out UIPanelInfo info) && info.Panel == panel)
@@ -339,7 +356,7 @@ namespace CandyUI
                 _closer.CloseImmediate(snapshot[i], PanelCloseReason.ForceClose);
 
             _dicOpenedPanels.Clear();
-            ClearCache(); // 别把"关闭后保留实例"的缓存留到下一个场景。
+            ClearCache(); // 别把"关闭后保留实例"的缓存留到下一个场景；同时递增缓存代号让在途关闭改走销毁。
         }
 
         /// <summary>
@@ -450,6 +467,9 @@ namespace CandyUI
         /// </summary>
         internal void ClearCache()
         {
+            // 先递增缓存代号（即使当前缓存为空）：关闭动画中的 KeepInstance 面板还没入缓存，
+            // 必须在它完成前让代号变化，否则动画结束后它会把实例写回已清空的缓存。
+            _cacheGeneration++;
             if (_dicPanelCache.Count == 0)
                 return;
             List<UIPanelInfo> snapshot = new List<UIPanelInfo>(_dicPanelCache.Values);
@@ -464,6 +484,8 @@ namespace CandyUI
         /// </summary>
         internal void ClearCache<T>() where T : UIPanel
         {
+            // 同 ClearCache：先失效在途关闭流程，再处理已缓存的实例。
+            _cacheGeneration++;
             Type type = typeof(T);
             if (!_dicPanelCache.TryGetValue(type, out UIPanelInfo info))
                 return;

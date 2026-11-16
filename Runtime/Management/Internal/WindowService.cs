@@ -22,6 +22,9 @@ namespace CandyUI
         private readonly PanelService _panels;
         private readonly WindowStack _stack = new WindowStack();
 
+        // 最近一次"关窗后恢复上一个窗口"的异步流程；打开新窗口前要先等它结束，避免栈序错乱。
+        private Task _pendingClose;
+
         #region 初始化
 
         /// <summary>
@@ -38,6 +41,7 @@ namespace CandyUI
         internal void Reset()
         {
             _stack.Clear();
+            _pendingClose = null; // 静态重置后不再等待上一轮遗留的恢复流程。
         }
 
         #endregion
@@ -53,6 +57,9 @@ namespace CandyUI
             CancellationToken cancellationToken = default) where T : UIPanel
         {
             cancellationToken.ThrowIfCancellationRequested();
+
+            // 上一次关窗的恢复流程还没结束：先等它完成再压栈，否则新窗口可能被随后恢复的旧窗口重新显示。
+            await WaitPendingCloseAsync();
 
             Type type = typeof(T);
 
@@ -134,7 +141,7 @@ namespace CandyUI
 
             UIPanel previous = _stack.Peek();
             if (previous != null && previous.State != UIPanelState.Closed)
-                _ = RestorePreviousWindowAsync(window, previous);
+                _pendingClose = RestorePreviousWindowAsync(window);
 
             return true;
         }
@@ -151,7 +158,7 @@ namespace CandyUI
             {
                 UIPanel previous = _stack.Peek();
                 if (previous != null && previous.State != UIPanelState.Closed)
-                    await RestorePreviousWindowAsync(window, previous);
+                    await RestorePreviousWindowAsync(window);
             }
 
             return true;
@@ -179,8 +186,11 @@ namespace CandyUI
             return true;
         }
 
-        /// <summary>等窗口关闭（退场播完/实例销毁或入缓存）后再恢复上一个窗口；异常只记录不打断关闭。</summary>
-        private async Task RestorePreviousWindowAsync(UIPanel window, UIPanel previous)
+        /// <summary>
+        /// 等窗口关闭（退场播完/实例销毁或入缓存）后恢复当前栈顶窗口；异常只记录不打断关闭。
+        /// 恢复时重新取栈顶：关闭动画期间若有窗口被打开/入栈，就按当前栈序判断，不再用过期的捕获变量。
+        /// </summary>
+        private async Task RestorePreviousWindowAsync(UIPanel window)
         {
             try
             {
@@ -192,11 +202,36 @@ namespace CandyUI
                 UnityEngine.Debug.LogException(exception);
             }
 
-            if (previous == null || previous.State == UIPanelState.Closed)
+            UIPanel top = _stack.Peek();
+            if (top == null || top.State == UIPanelState.Closed || top.State == UIPanelState.Visible)
+                return; // 栈顶已经可见 = 关闭动画期间有新窗口打开了，不再重复 show 旧窗口。
+
+            top.InternalShow(top.Data);
+            CandyUILog.Info($"恢复上一个窗口：{top.GetType().Name}（栈深 {_stack.Count}）");
+        }
+
+        /// <summary>
+        /// 等待上一次"关窗后恢复"流程结束；没有待处理任务时立即完成，异常只记录不打断打开。
+        /// </summary>
+        private async Task WaitPendingCloseAsync()
+        {
+            Task pending = _pendingClose;
+            if (pending == null || pending.IsCompleted)
                 return;
 
-            previous.InternalShow(previous.Data);
-            CandyUILog.Info($"恢复上一个窗口：{previous.GetType().Name}（栈深 {_stack.Count}）");
+            try
+            {
+                await pending;
+            }
+            catch (Exception exception)
+            {
+                CandyUILog.Warn($"等待上一次关窗完成时出错：{exception.Message}");
+                UnityEngine.Debug.LogException(exception);
+            }
+
+            // 等待期间可能又记录了新的 pending close，只清掉自己等的那一个。
+            if (ReferenceEquals(_pendingClose, pending))
+                _pendingClose = null;
         }
 
         /// <summary>只清空历史栈，不销毁窗口实例（CloseAll 会紧接着统一销毁）。</summary>

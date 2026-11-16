@@ -167,6 +167,12 @@ namespace CandyUI.Tests
     {
     }
 
+    /// <summary>窗口 D：只用于"关闭 C 的动画期间打开新窗口"的竞态用例。</summary>
+    [UIPanel("CandyUITests/WindowD", UILayer.Window)]
+    public sealed class WindowDTestPanel : TestPanelBase
+    {
+    }
+
     [UIPanel("CandyUITests/PopupA", UILayer.Popup, popupPriority: 0)]
     public sealed class PopupATestPanel : TestPanelBase
     {
